@@ -7,6 +7,7 @@ The semconv processor enforces semantic conventions to reduce cardinality in Ope
 The following settings can be configured:
 
 - `enabled` (default: false): Enable/disable the processor
+- `benchmark` (default: false): Enable cardinality reduction metrics to track original vs reduced span name counts
 - `mappings`: List of attribute mappings to apply
 
 ### Mapping Actions
@@ -31,6 +32,7 @@ This processor enforces OpenTelemetry semantic conventions to ensure span names 
 processors:
   semconv:
     enabled: true
+    benchmark: true  # Enable cardinality metrics
     # Migrate to newer semantic conventions
     mappings:
       - from: "http.method"
@@ -63,6 +65,11 @@ The processor exports the following metrics to monitor its performance and behav
 ### Histogram Metrics
 
 - `processor_semconv_processing_duration` - Time taken to process a batch of telemetry in milliseconds (with `signal_type` attribute)
+
+### Benchmark Metrics (when `benchmark: true`)
+
+- `processor_semconv_original_span_name_count` - Number of unique span names before enforcement
+- `processor_semconv_reduced_span_name_count` - Number of unique span names after enforcement
 
 These metrics are automatically exported through the collector's configured telemetry pipeline and can be used to:
 - Monitor the impact of semantic convention enforcement

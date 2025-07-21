@@ -12,6 +12,9 @@ type Config struct {
 	// Enabled determines if the processor is enabled
 	Enabled bool `mapstructure:"enabled"`
 	
+	// Benchmark enables cardinality metrics tracking
+	Benchmark bool `mapstructure:"benchmark"`
+	
 	// Mappings defines attribute mappings for semantic convention processing
 	Mappings []AttributeMapping `mapstructure:"mappings"`
 	
