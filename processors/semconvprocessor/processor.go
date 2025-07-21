@@ -195,6 +195,12 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 		sp.spanNameCount[span.Name()]++
 	}
 	
+	// Check if operation.name is already set - if so, skip rule evaluation
+	if _, exists := span.Attributes().Get(sp.config.SpanProcessing.OperationNameAttribute); exists {
+		// Operation name already set, skip processing
+		return
+	}
+	
 	// Create OTTL transform context - using dummy values for missing parameters
 	dummyScopeSpans := ptrace.NewScopeSpans()
 	dummyResourceSpans := ptrace.NewResourceSpans()
@@ -257,7 +263,10 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 			// Only add attributes
 			span.Attributes().PutStr(sp.config.SpanProcessing.OperationNameAttribute, operationName)
 			if operationType != "" {
-				span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
+				// Only set operation.type if not already present
+				if _, exists := span.Attributes().Get(sp.config.SpanProcessing.OperationTypeAttribute); !exists {
+					span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
+				}
 			}
 			
 			// Record what would be enforced in enrich mode
@@ -269,6 +278,9 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 				))
 			
 		case ModeEnforce:
+			// Add operation name as attribute
+			span.Attributes().PutStr(sp.config.SpanProcessing.OperationNameAttribute, operationName)
+			
 			// Override span name
 			originalName := span.Name()
 			if sp.config.SpanProcessing.PreserveOriginalName && originalName != operationName {
@@ -276,9 +288,12 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 			}
 			span.SetName(operationName)
 			
-			// Still add operation type as attribute
+			// Add operation type as attribute
 			if operationType != "" {
-				span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
+				// Only set operation.type if not already present
+				if _, exists := span.Attributes().Get(sp.config.SpanProcessing.OperationTypeAttribute); !exists {
+					span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
+				}
 			}
 			
 			// Record actual enforcement

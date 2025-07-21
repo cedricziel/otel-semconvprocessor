@@ -76,6 +76,7 @@ The semconv processor uses OTTL-based rules to reduce cardinality by generating 
 - **Span kind filtering** to create targeted rules for specific span types
 - **Custom OTTL functions** for common patterns
 - **Cardinality tracking metrics**
+- **Respects existing attributes**: Skips processing if `operation.name` already exists, preserves existing `operation.type`
 
 ### Basic Configuration
 

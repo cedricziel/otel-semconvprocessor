@@ -10,6 +10,7 @@ The semconv processor enforces semantic conventions to reduce cardinality in Ope
 - **Custom OTTL functions** for common patterns (NormalizePath, ParseSQL, RemoveQueryParams)
 - **Cardinality reduction metrics** to track effectiveness
 - **Configurable operation name and type attributes**
+- **Respects existing attributes**: Skips processing if `operation.name` already exists, doesn't override existing `operation.type`
 
 ## Configuration
 
@@ -52,6 +53,13 @@ processors:
 
 - **`enrich`**: Adds operation name and type as attributes, preserves original span names
 - **`enforce`**: Replaces span names with operation names for cardinality reduction
+
+### Attribute Handling
+
+The processor respects existing attributes:
+- **Skips processing entirely** if `operation.name` attribute already exists on the span
+- **Does not override** existing `operation.type` attributes - only sets if not present
+- This allows upstream processors or instrumentation to set these attributes and have them preserved
 
 ### Rule Configuration
 
