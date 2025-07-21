@@ -49,98 +49,51 @@ processors:
       operation_type_attribute: "operation.type"
       original_name_attribute: "name.original"
       rules:
-        # HTTP server spans - route normalization (newer semantic conventions)
-        - id: "http_server_routes_new"
-          priority: 90
-          span_kind: ["server"]
-          condition: 'attributes["http.request.method"] != nil and attributes["http.route"] != nil'
-          operation_name: 'Concat([attributes["http.request.method"], attributes["http.route"]], " ")'
-          operation_type: '"http"'
-
-        # HTTP server spans - route normalization (older semantic conventions)
+        # HTTP server spans - route normalization (supports both old and new conventions)
         - id: "http_server_routes"
           priority: 100
           span_kind: ["server"]
-          condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
-          operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+          condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["http.route"] != nil'
+          operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), attributes["http.route"]], " ")'
           operation_type: '"http"'
 
-        # HTTP server spans - method only (newer semantic conventions)
-        - id: "http_server_method_only_new"
-          priority: 105
-          span_kind: ["server"]
-          condition: 'attributes["http.request.method"] != nil and attributes["http.route"] == nil'
-          operation_name: 'Concat(["HTTP", attributes["http.request.method"]], " ")'
-          operation_type: '"http"'
-
-        # HTTP server spans - method only (older semantic conventions)
+        # HTTP server spans - method only (supports both old and new conventions)
         - id: "http_server_method_only"
           priority: 110
           span_kind: ["server"]
-          condition: 'attributes["http.method"] != nil and attributes["http.route"] == nil'
-          operation_name: 'Concat(["HTTP", attributes["http.method"]], " ")'
+          condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["http.route"] == nil'
+          operation_name: 'Concat(["HTTP", FirstNonNil([attributes["http.request.method"], attributes["http.method"]])], " ")'
           operation_type: '"http"'
 
-        # HTTP client spans - with url.template (newer semantic conventions)
-        - id: "http_client_template_new"
-          priority: 135
-          span_kind: ["client"]
-          condition: 'attributes["http.request.method"] != nil and attributes["url.template"] != nil'
-          operation_name: 'Concat([attributes["http.request.method"], attributes["url.template"]], " ")'
-          operation_type: '"http_client"'
-
-        # HTTP client spans - with url.template (older semantic conventions)
+        # HTTP client spans - with url.template (supports both old and new conventions)
         - id: "http_client_template"
           priority: 140
           span_kind: ["client"]
-          condition: 'attributes["http.method"] != nil and attributes["url.template"] != nil'
-          operation_name: 'Concat([attributes["http.method"], attributes["url.template"]], " ")'
+          condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["url.template"] != nil'
+          operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), attributes["url.template"]], " ")'
           operation_type: '"http_client"'
 
-        # HTTP client spans - method only (newer semantic conventions)
-        - id: "http_client_method_only_new"
-          priority: 142
-          span_kind: ["client"]
-          condition: 'attributes["http.request.method"] != nil and attributes["url.template"] == nil'
-          operation_name: 'Concat(["HTTP", attributes["http.request.method"]], " ")'
-          operation_type: '"http_client"'
-
-        # HTTP client spans - method only (older semantic conventions)
+        # HTTP client spans - method only (supports both old and new conventions)
         - id: "http_client_method_only"
           priority: 145
           span_kind: ["client"]
-          condition: 'attributes["http.method"] != nil and attributes["url.template"] == nil'
-          operation_name: 'Concat(["HTTP", attributes["http.method"]], " ")'
+          condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["url.template"] == nil'
+          operation_name: 'Concat(["HTTP", FirstNonNil([attributes["http.request.method"], attributes["http.method"]])], " ")'
           operation_type: '"http_client"'
 
-        # HTTP client spans - URL normalization (newer semantic conventions)
-        - id: "http_client_requests_new"
-          priority: 148
-          span_kind: ["client"]
-          condition: 'attributes["http.request.method"] != nil and attributes["http.url"] != nil'
-          operation_name: 'Concat([attributes["http.request.method"], RemoveQueryParams(attributes["http.url"])], " ")'
-          operation_type: '"http_client"'
-
-        # HTTP client spans - URL normalization (older semantic conventions)
+        # HTTP client spans - URL normalization (supports both old and new conventions)
         - id: "http_client_requests"
           priority: 150
           span_kind: ["client"]
-          condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
-          operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+          condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["http.url"] != nil'
+          operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), RemoveQueryParams(attributes["http.url"])], " ")'
           operation_type: '"http_client"'
 
-        # HTTP path normalization (newer semantic conventions)
-        - id: "http_paths_new"
-          priority: 195
-          condition: 'attributes["http.request.method"] != nil and attributes["url.path"] != nil'
-          operation_name: 'Concat([attributes["http.request.method"], NormalizePath(attributes["url.path"])], " ")'
-          operation_type: '"http"'
-
-        # HTTP path normalization (older semantic conventions)
+        # HTTP path normalization (supports both old and new conventions)
         - id: "http_paths"
           priority: 200
-          condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
-          operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
+          condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["url.path"] != nil'
+          operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), NormalizePath(attributes["url.path"])], " ")'
           operation_type: '"http"'
 
         # Database client operations

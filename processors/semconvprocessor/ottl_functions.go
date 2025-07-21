@@ -22,6 +22,7 @@ func ottlFunctions[K any]() map[string]ottl.Factory[K] {
 	funcs["NormalizePath"] = normalizePathFactory[K]()
 	funcs["ParseSQL"] = parseSQLFactory[K]()
 	funcs["RemoveQueryParams"] = removeQueryParamsFactory[K]()
+	funcs["FirstNonNil"] = firstNonNilFactory[K]()
 	
 	return funcs
 }
@@ -185,5 +186,40 @@ func removeQueryParams[K any](path ottl.StringGetter[K]) ottl.ExprFunc[K] {
 		}
 		
 		return pathStr, nil
+	})
+}
+
+// firstNonNilFactory creates a FirstNonNil function
+func firstNonNilFactory[K any]() ottl.Factory[K] {
+	return ottl.NewFactory("FirstNonNil", &firstNonNilArguments[K]{}, createFirstNonNilFunction[K])
+}
+
+type firstNonNilArguments[K any] struct {
+	Values []ottl.Getter[K] `ottlarg:"0"`
+}
+
+func createFirstNonNilFunction[K any](_ ottl.FunctionContext, oArgs ottl.Arguments) (ottl.ExprFunc[K], error) {
+	args, ok := oArgs.(*firstNonNilArguments[K])
+	if !ok {
+		return nil, fmt.Errorf("FirstNonNilFactory args must be of type *firstNonNilArguments")
+	}
+
+	return firstNonNil(args.Values), nil
+}
+
+func firstNonNil[K any](values []ottl.Getter[K]) ottl.ExprFunc[K] {
+	return ottl.ExprFunc[K](func(ctx context.Context, tCtx K) (any, error) {
+		for _, getter := range values {
+			value, err := getter.Get(ctx, tCtx)
+			if err != nil {
+				// Continue to next value if there's an error
+				continue
+			}
+			if value != nil {
+				return value, nil
+			}
+		}
+		// If all values are nil or errored, return nil
+		return nil, nil
 	})
 }

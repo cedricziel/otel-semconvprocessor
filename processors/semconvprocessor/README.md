@@ -215,6 +215,17 @@ Removes query parameters from URLs:
 RemoveQueryParams("/search?q=test&limit=10")  # → "/search"
 ```
 
+### FirstNonNil(values)
+
+Returns the first non-nil value from a list of attribute getters. Useful for handling both old and new semantic conventions:
+
+```ottl
+FirstNonNil([attributes["http.request.method"], attributes["http.method"]])  # → "GET" (if either exists)
+FirstNonNil([attributes["preferred"], attributes["fallback"], attributes["default"]])  # → First non-nil value
+```
+
+This function is particularly useful for supporting multiple semantic convention versions without duplicating rules.
+
 ## Complete Example
 
 ```yaml

@@ -201,6 +201,11 @@ Extracts operation and primary table from SQL statements:
 Removes query parameters from URLs:
 - `/search?q=test&limit=10` → `/search`
 
+#### FirstNonNil(values)
+Returns the first non-nil value from a list of attributes:
+- `FirstNonNil([attributes["http.request.method"], attributes["http.method"]])` → First non-nil value
+- Useful for supporting both old and new semantic conventions without rule duplication
+
 ### Cardinality Reduction Examples
 
 | Original Span Name | OTTL Rule | Result |
@@ -247,19 +252,19 @@ Rules can be restricted to specific span kinds to create more targeted transform
 
 ### HTTP Normalizations
 ```yaml
-# Server spans - route-based (preferred)
+# Server spans - route-based (supports both old and new conventions)
 span_kind: ["server"]
-condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
-operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["http.route"] != nil'
+operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), attributes["http.route"]], " ")'
 
 # Client spans - URL-based
 span_kind: ["client"]
-condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
-operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["http.url"] != nil'
+operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), RemoveQueryParams(attributes["http.url"])], " ")'
 
 # Any span kind - path-based (fallback)  
-condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
-operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
+condition: 'FirstNonNil([attributes["http.request.method"], attributes["http.method"]]) != nil and attributes["url.path"] != nil'
+operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), NormalizePath(attributes["url.path"])], " ")'
 ```
 
 ### Database Operations
