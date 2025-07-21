@@ -49,6 +49,21 @@ processors:
       operation_type_attribute: "operation.type"
       original_name_attribute: "name.original"
       rules:
+        # Rule Priority Ranges:
+        # 100-199: HTTP operations
+        # 200-299: GraphQL operations
+        # 300-399: Database operations
+        # 400-499: RPC/gRPC operations
+        # 500-599: Messaging operations
+        # 600+: Internal/generic operations
+        #
+        # Cardinality Reduction Strategy:
+        # - Use templated routes instead of raw paths
+        # - Normalize paths with NormalizePath() to replace IDs
+        # - Parse SQL statements instead of using raw queries
+        # - Avoid high-cardinality attributes like document IDs, bucket names, cron expressions
+        # - Support both old and new semantic conventions using FirstNonNil()
+        
         # HTTP server spans - route normalization (supports both old and new conventions)
         - id: "http_server_routes"
           priority: 100
@@ -96,13 +111,35 @@ processors:
           operation_name: 'Concat([FirstNonNil([attributes["http.request.method"], attributes["http.method"]]), NormalizePath(attributes["url.path"])], " ")'
           operation_type: '"http"'
 
-        # Database client operations
+        # GraphQL operations
+        - id: "graphql_operations"
+          priority: 250
+          condition: 'attributes["graphql.operation.type"] != nil and attributes["graphql.operation.name"] != nil'
+          operation_name: 'Concat([attributes["graphql.operation.type"], attributes["graphql.operation.name"]], " ")'
+          operation_type: '"graphql"'
+
+        # Database client operations - SQL parsing
         - id: "database_queries"
           priority: 300
           span_kind: ["client"]  # Database calls are typically client spans
           condition: 'attributes["db.statement"] != nil'
           operation_name: 'ParseSQL(attributes["db.statement"])'
           operation_type: 'attributes["db.system"]'
+
+        # Database client operations - operation and collection
+        - id: "database_operations"
+          priority: 310
+          span_kind: ["client"]
+          condition: 'attributes["db.operation"] != nil and attributes["db.collection.name"] != nil'
+          operation_name: 'Concat([attributes["db.operation"], attributes["db.collection.name"]], " ")'
+          operation_type: 'attributes["db.system"]'
+
+        # FaaS database trigger operations (without document name to reduce cardinality)
+        - id: "faas_db_trigger"
+          priority: 350
+          condition: 'attributes["faas.document.collection"] != nil and attributes["faas.document.operation"] != nil'
+          operation_name: 'Concat([attributes["faas.document.collection"], attributes["faas.document.operation"]], " ")'
+          operation_type: '"faas_db_trigger"'
 
         # gRPC server operations
         - id: "grpc_server_operations"
@@ -120,20 +157,44 @@ processors:
           operation_name: 'Concat(["grpc.client", attributes["rpc.service"], attributes["rpc.method"]], "/")'
           operation_type: '"grpc_client"'
 
-        # Messaging producer operations
-        - id: "messaging_producer"
+        # Messaging operations with operation type and destination
+        - id: "messaging_with_operation"
           priority: 500
+          span_kind: ["producer", "consumer"]
+          condition: 'attributes["messaging.operation.type"] != nil and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat([attributes["messaging.operation.type"], attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+
+        # Messaging operations with operation and destination
+        - id: "messaging_operation_name"
+          priority: 510
+          span_kind: ["producer", "consumer"]
+          condition: 'attributes["messaging.operation.name"] != nil and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat([attributes["messaging.operation.name"], attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+
+        # Messaging producer operations (legacy)
+        - id: "messaging_producer"
+          priority: 520
           span_kind: ["producer"]
           condition: 'attributes["messaging.operation"] == "publish" and attributes["messaging.destination.name"] != nil'
           operation_name: 'Concat(["publish", attributes["messaging.destination.name"]], " ")'
           operation_type: '"messaging"'
 
-        # Messaging consumer operations
+        # Messaging consumer operations (legacy)
         - id: "messaging_consumer"
-          priority: 550
+          priority: 530
           span_kind: ["consumer"]
           condition: 'attributes["messaging.operation"] == "process" and attributes["messaging.destination.name"] != nil'
           operation_name: 'Concat(["process", attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+
+        # Messaging operations with system and destination
+        - id: "messaging_system"
+          priority: 540
+          span_kind: ["producer", "consumer"]
+          condition: 'attributes["messaging.system"] != nil and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat([attributes["messaging.system"], attributes["messaging.destination.name"]], " ")'
           operation_type: '"messaging"'
 
         # Internal operations
