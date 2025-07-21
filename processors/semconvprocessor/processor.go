@@ -29,8 +29,8 @@ type semconvProcessor struct {
 	telemetry      *metadata.TelemetryBuilder
 	compiledRules  []compiledRule
 	parser         ottl.Parser[ottlspan.TransformContext]
-	spanNameCount  map[string]int64 // For benchmark mode
-	operationCount map[string]int64 // For benchmark mode
+	spanNameCount  map[string]int64 // For benchmark mode - tracks occurrences
+	operationCount map[string]int64 // For benchmark mode - tracks occurrences
 }
 
 // compiledRule represents a compiled OTTL rule
@@ -192,6 +192,10 @@ func getSpanKindString(kind ptrace.SpanKind) string {
 func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, resource pcommon.Resource, scope pcommon.InstrumentationScope) {
 	// Track original span name for benchmark mode
 	if sp.config.Benchmark {
+		if _, exists := sp.spanNameCount[span.Name()]; !exists {
+			// First time seeing this span name
+			sp.telemetry.ProcessorSemconvUniqueSpanNamesTotal.Add(ctx, 1)
+		}
 		sp.spanNameCount[span.Name()]++
 	}
 	
@@ -307,6 +311,10 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 		
 		// Track operation name for benchmark mode
 		if sp.config.Benchmark {
+			if _, exists := sp.operationCount[operationName]; !exists {
+				// First time seeing this operation name
+				sp.telemetry.ProcessorSemconvUniqueOperationNamesTotal.Add(ctx, 1)
+			}
 			sp.operationCount[operationName]++
 		}
 		
@@ -371,8 +379,12 @@ func (sp *semconvProcessor) recordBenchmarkMetrics(ctx context.Context) {
 	originalCount := int64(len(sp.spanNameCount))
 	reducedCount := int64(len(sp.operationCount))
 	
+	// Record unique counts (gauges)
 	sp.telemetry.ProcessorSemconvOriginalSpanNameCount.Record(ctx, originalCount)
 	sp.telemetry.ProcessorSemconvReducedSpanNameCount.Record(ctx, reducedCount)
+	
+	// Note: Total counts are tracked in processSpan and will be automatically
+	// accumulated by the OpenTelemetry metrics SDK as monotonic counters
 	
 	if originalCount > 0 {
 		reduction := float64(originalCount-reducedCount) / float64(originalCount) * 100

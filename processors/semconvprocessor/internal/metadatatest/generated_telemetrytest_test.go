@@ -24,6 +24,8 @@ func TestSetupTelemetry(t *testing.T) {
 	tb.ProcessorSemconvReducedSpanNameCount.Record(context.Background(), 1)
 	tb.ProcessorSemconvSpanNamesEnforced.Add(context.Background(), 1)
 	tb.ProcessorSemconvSpansProcessed.Add(context.Background(), 1)
+	tb.ProcessorSemconvUniqueOperationNamesTotal.Add(context.Background(), 1)
+	tb.ProcessorSemconvUniqueSpanNamesTotal.Add(context.Background(), 1)
 	AssertEqualProcessorSemconvErrors(t, testTel,
 		[]metricdata.DataPoint[int64]{{Value: 1}},
 		metricdatatest.IgnoreTimestamp())
@@ -40,6 +42,12 @@ func TestSetupTelemetry(t *testing.T) {
 		[]metricdata.DataPoint[int64]{{Value: 1}},
 		metricdatatest.IgnoreTimestamp())
 	AssertEqualProcessorSemconvSpansProcessed(t, testTel,
+		[]metricdata.DataPoint[int64]{{Value: 1}},
+		metricdatatest.IgnoreTimestamp())
+	AssertEqualProcessorSemconvUniqueOperationNamesTotal(t, testTel,
+		[]metricdata.DataPoint[int64]{{Value: 1}},
+		metricdatatest.IgnoreTimestamp())
+	AssertEqualProcessorSemconvUniqueSpanNamesTotal(t, testTel,
 		[]metricdata.DataPoint[int64]{{Value: 1}},
 		metricdatatest.IgnoreTimestamp())
 

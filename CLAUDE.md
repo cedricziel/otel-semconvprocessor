@@ -65,3 +65,7 @@ cd processors/semconvprocessor && go build .
 - When updating dependencies, ensure compatibility between collector components and pdata versions
 - The processor is disabled by default (`enabled: false`) and must be explicitly enabled in configuration
 - The OCB version should match the `otelcol_version` specified in builder-config.yaml
+
+## Development Tips
+
+- We can use go run go.opentelemetry.io/collector/cmd/mdatagen processors/semconvprocessor/metadata.yaml to regenerate the metadata

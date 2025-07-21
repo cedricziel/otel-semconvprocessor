@@ -79,3 +79,19 @@ Number of spans processed by the processor
 | Name | Description | Values |
 | ---- | ----------- | ------ |
 | signal_type | The type of signal being processed | Str: ``traces``, ``metrics``, ``logs`` |
+
+### otelcol_processor_semconv_unique_operation_names_total
+
+Total number of unique operation names discovered
+
+| Unit | Metric Type | Value Type | Monotonic |
+| ---- | ----------- | ---------- | --------- |
+| {names} | Sum | Int | true |
+
+### otelcol_processor_semconv_unique_span_names_total
+
+Total number of unique span names discovered
+
+| Unit | Metric Type | Value Type | Monotonic |
+| ---- | ----------- | ---------- | --------- |
+| {names} | Sum | Int | true |

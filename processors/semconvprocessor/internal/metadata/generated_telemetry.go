@@ -23,15 +23,17 @@ func Tracer(settings component.TelemetrySettings) trace.Tracer {
 // TelemetryBuilder provides an interface for components to report telemetry
 // as defined in metadata and user config.
 type TelemetryBuilder struct {
-	meter                                 metric.Meter
-	mu                                    sync.Mutex
-	registrations                         []metric.Registration
-	ProcessorSemconvErrors                metric.Int64Counter
-	ProcessorSemconvOriginalSpanNameCount metric.Int64Gauge
-	ProcessorSemconvProcessingDuration    metric.Float64Histogram
-	ProcessorSemconvReducedSpanNameCount  metric.Int64Gauge
-	ProcessorSemconvSpanNamesEnforced     metric.Int64Counter
-	ProcessorSemconvSpansProcessed        metric.Int64Counter
+	meter                                     metric.Meter
+	mu                                        sync.Mutex
+	registrations                             []metric.Registration
+	ProcessorSemconvErrors                    metric.Int64Counter
+	ProcessorSemconvOriginalSpanNameCount     metric.Int64Gauge
+	ProcessorSemconvProcessingDuration        metric.Float64Histogram
+	ProcessorSemconvReducedSpanNameCount      metric.Int64Gauge
+	ProcessorSemconvSpanNamesEnforced         metric.Int64Counter
+	ProcessorSemconvSpansProcessed            metric.Int64Counter
+	ProcessorSemconvUniqueOperationNamesTotal metric.Int64Counter
+	ProcessorSemconvUniqueSpanNamesTotal      metric.Int64Counter
 }
 
 // TelemetryBuilderOption applies changes to default builder.
@@ -98,6 +100,18 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 		"otelcol_processor_semconv_spans_processed",
 		metric.WithDescription("Number of spans processed by the processor"),
 		metric.WithUnit("{spans}"),
+	)
+	errs = errors.Join(errs, err)
+	builder.ProcessorSemconvUniqueOperationNamesTotal, err = builder.meter.Int64Counter(
+		"otelcol_processor_semconv_unique_operation_names_total",
+		metric.WithDescription("Total number of unique operation names discovered"),
+		metric.WithUnit("{names}"),
+	)
+	errs = errors.Join(errs, err)
+	builder.ProcessorSemconvUniqueSpanNamesTotal, err = builder.meter.Int64Counter(
+		"otelcol_processor_semconv_unique_span_names_total",
+		metric.WithDescription("Total number of unique span names discovered"),
+		metric.WithUnit("{names}"),
 	)
 	errs = errors.Join(errs, err)
 	return &builder, errs

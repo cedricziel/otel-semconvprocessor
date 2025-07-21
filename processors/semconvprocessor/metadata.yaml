@@ -82,3 +82,19 @@ telemetry:
       unit: "{names}"
       gauge:
         value_type: int
+
+    processor_semconv_unique_span_names_total:
+      enabled: true
+      description: Total number of unique span names discovered
+      unit: "{names}"
+      sum:
+        value_type: int
+        monotonic: true
+
+    processor_semconv_unique_operation_names_total:
+      enabled: true
+      description: Total number of unique operation names discovered
+      unit: "{names}"
+      sum:
+        value_type: int
+        monotonic: true
