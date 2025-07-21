@@ -10,7 +10,6 @@ otelcol-semconv/
 **/*.dylib
 
 # Go build cache
-**/go.sum
 **/vendor/
 
 # Test files

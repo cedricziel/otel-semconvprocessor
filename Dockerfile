@@ -10,9 +10,11 @@ WORKDIR /build
 # Install OpenTelemetry Collector Builder
 RUN go install go.opentelemetry.io/collector/cmd/builder@v0.130.0
 
-# Copy go mod files first for better caching
-COPY processors/semconvprocessor/go.mod processors/semconvprocessor/go.sum ./processors/semconvprocessor/
-RUN cd processors/semconvprocessor && go mod download
+# Copy builder config first
+COPY builder-config.yaml ./
+
+# Copy processor module
+COPY processors/semconvprocessor/ ./processors/semconvprocessor/
 
 # Copy the entire project
 COPY . .
