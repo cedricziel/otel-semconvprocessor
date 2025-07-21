@@ -46,3 +46,26 @@ processors:
 ```
 
 This configuration ensures HTTP spans like `GET /users/12345?include=profile` become `GET /users/{id}` while preserving the original details in attributes.
+
+## Telemetry Metrics
+
+The processor exports the following metrics to monitor its performance and behavior:
+
+### Counter Metrics
+
+- `processor_semconv_attributes_renamed` - Number of attributes renamed by the processor
+- `processor_semconv_attributes_copied` - Number of attributes copied by the processor
+- `processor_semconv_attributes_moved` - Number of attributes moved by the processor
+- `processor_semconv_spans_processed` - Number of spans processed (with `signal_type` attribute)
+- `processor_semconv_span_names_enforced` - Number of span names changed to match semantic conventions (with `convention_type` attribute: http, database, messaging, custom)
+- `processor_semconv_errors` - Number of errors encountered during processing (with `error_type` attribute)
+
+### Histogram Metrics
+
+- `processor_semconv_processing_duration` - Time taken to process a batch of telemetry in milliseconds (with `signal_type` attribute)
+
+These metrics are automatically exported through the collector's configured telemetry pipeline and can be used to:
+- Monitor the impact of semantic convention enforcement
+- Track processing performance
+- Identify potential configuration issues
+- Understand which types of transformations are most common

@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
+
+	"github.com/cedricziel/semconvprocessor/processors/semconvprocessor/internal/metadata"
 )
 
 // semconvProcessor is the implementation of the semconv processor
@@ -21,6 +24,7 @@ type semconvProcessor struct {
 	logger      *zap.Logger
 	config      *Config
 	customRules []compiledSpanNameRule
+	telemetry   *metadata.TelemetryBuilder
 }
 
 // compiledSpanNameRule is a compiled version of SpanNameRule
@@ -31,10 +35,11 @@ type compiledSpanNameRule struct {
 }
 
 // newSemconvProcessor creates a new semconv processor
-func newSemconvProcessor(logger *zap.Logger, config *Config) *semconvProcessor {
+func newSemconvProcessor(logger *zap.Logger, config *Config, telemetry *metadata.TelemetryBuilder) *semconvProcessor {
 	sp := &semconvProcessor{
-		logger: logger,
-		config: config,
+		logger:    logger,
+		config:    config,
+		telemetry: telemetry,
 	}
 	
 	// Compile custom span name rules
@@ -63,13 +68,16 @@ func (sp *semconvProcessor) processTraces(ctx context.Context, td ptrace.Traces)
 		return td, nil
 	}
 
+	start := time.Now()
+	spanCount := 0
+
 	// Process traces here
 	// This is where you would implement semantic convention processing for traces
 	resourceSpans := td.ResourceSpans()
 	for i := 0; i < resourceSpans.Len(); i++ {
 		rs := resourceSpans.At(i)
 		// Process resource attributes
-		sp.processAttributes(rs.Resource().Attributes())
+		sp.processAttributes(ctx, rs.Resource().Attributes())
 		
 		scopeSpans := rs.ScopeSpans()
 		for j := 0; j < scopeSpans.Len(); j++ {
@@ -77,15 +85,23 @@ func (sp *semconvProcessor) processTraces(ctx context.Context, td ptrace.Traces)
 			spans := ss.Spans()
 			for k := 0; k < spans.Len(); k++ {
 				span := spans.At(k)
+				spanCount++
 				// Process span attributes
-				sp.processAttributes(span.Attributes())
+				sp.processAttributes(ctx, span.Attributes())
 				// Enforce span name conventions
 				if sp.config.SpanNameRules.Enabled {
-					sp.enforceSpanName(span)
+					sp.enforceSpanName(ctx, span)
 				}
 			}
 		}
 	}
+
+	// Record metrics
+	if spanCount > 0 {
+		sp.telemetry.RecordProcessorSemconvSpansProcessedDataPoint(ctx, int64(spanCount), metadata.AttributeSignalTypeTraces)
+	}
+	duration := float64(time.Since(start).Microseconds()) / 1000.0 // Convert to milliseconds
+	sp.telemetry.RecordProcessorSemconvProcessingDurationDataPoint(ctx, duration, metadata.AttributeSignalTypeTraces)
 
 	return td, nil
 }
@@ -96,14 +112,19 @@ func (sp *semconvProcessor) processMetrics(ctx context.Context, md pmetric.Metri
 		return md, nil
 	}
 
+	start := time.Now()
+
 	// Process metrics here
 	// This is where you would implement semantic convention processing for metrics
 	resourceMetrics := md.ResourceMetrics()
 	for i := 0; i < resourceMetrics.Len(); i++ {
 		rm := resourceMetrics.At(i)
 		// Process resource attributes
-		sp.processAttributes(rm.Resource().Attributes())
+		sp.processAttributes(ctx, rm.Resource().Attributes())
 	}
+
+	duration := float64(time.Since(start).Microseconds()) / 1000.0 // Convert to milliseconds
+	sp.telemetry.RecordProcessorSemconvProcessingDurationDataPoint(ctx, duration, metadata.AttributeSignalTypeMetrics)
 
 	return md, nil
 }
@@ -114,13 +135,15 @@ func (sp *semconvProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog
 		return ld, nil
 	}
 
+	start := time.Now()
+
 	// Process logs here
 	// This is where you would implement semantic convention processing for logs
 	resourceLogs := ld.ResourceLogs()
 	for i := 0; i < resourceLogs.Len(); i++ {
 		rl := resourceLogs.At(i)
 		// Process resource attributes
-		sp.processAttributes(rl.Resource().Attributes())
+		sp.processAttributes(ctx, rl.Resource().Attributes())
 		
 		scopeLogs := rl.ScopeLogs()
 		for j := 0; j < scopeLogs.Len(); j++ {
@@ -129,40 +152,47 @@ func (sp *semconvProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog
 			for k := 0; k < logs.Len(); k++ {
 				log := logs.At(k)
 				// Process log attributes
-				sp.processAttributes(log.Attributes())
+				sp.processAttributes(ctx, log.Attributes())
 			}
 		}
 	}
+
+	duration := float64(time.Since(start).Microseconds()) / 1000.0 // Convert to milliseconds
+	sp.telemetry.RecordProcessorSemconvProcessingDurationDataPoint(ctx, duration, metadata.AttributeSignalTypeLogs)
 
 	return ld, nil
 }
 
 // processAttributes applies configured mappings to attributes
-func (sp *semconvProcessor) processAttributes(attrs pcommon.Map) {
+func (sp *semconvProcessor) processAttributes(ctx context.Context, attrs pcommon.Map) {
 	for _, mapping := range sp.config.Mappings {
 		switch mapping.Action {
 		case "rename":
 			if val, exists := attrs.Get(mapping.From); exists {
 				attrs.PutStr(mapping.To, val.AsString())
 				attrs.Remove(mapping.From)
+				sp.telemetry.RecordProcessorSemconvAttributesRenamedDataPoint(ctx, 1)
 			}
 		case "copy":
 			if val, exists := attrs.Get(mapping.From); exists {
 				attrs.PutStr(mapping.To, val.AsString())
+				sp.telemetry.RecordProcessorSemconvAttributesCopiedDataPoint(ctx, 1)
 			}
 		case "move":
 			if val, exists := attrs.Get(mapping.From); exists {
 				attrs.PutStr(mapping.To, val.AsString())
 				attrs.Remove(mapping.From)
+				sp.telemetry.RecordProcessorSemconvAttributesMovedDataPoint(ctx, 1)
 			}
 		default:
 			sp.logger.Warn("unknown mapping action", zap.String("action", mapping.Action))
+			sp.telemetry.RecordProcessorSemconvErrorsDataPoint(ctx, 1, metadata.AttributeErrorTypeValidation)
 		}
 	}
 }
 
 // enforceSpanName applies semantic convention rules to span names
-func (sp *semconvProcessor) enforceSpanName(span ptrace.Span) {
+func (sp *semconvProcessor) enforceSpanName(ctx context.Context, span ptrace.Span) {
 	attrs := span.Attributes()
 	originalName := span.Name()
 	newName := originalName
@@ -173,23 +203,36 @@ func (sp *semconvProcessor) enforceSpanName(span ptrace.Span) {
 	// HTTP span name enforcement
 	if sp.shouldApplyHTTPRules(attrs, spanKind) {
 		newName = sp.enforceHTTPSpanName(span, attrs)
+		if newName != originalName {
+			sp.telemetry.RecordProcessorSemconvSpanNamesEnforcedDataPoint(ctx, 1, metadata.AttributeConventionTypeHTTP)
+		}
 	}
 	
 	// Database span name enforcement
 	if sp.shouldApplyDatabaseRules(attrs, spanKind) {
 		newName = sp.enforceDatabaseSpanName(span, attrs)
+		if newName != originalName {
+			sp.telemetry.RecordProcessorSemconvSpanNamesEnforcedDataPoint(ctx, 1, metadata.AttributeConventionTypeDatabase)
+		}
 	}
 	
 	// Messaging span name enforcement
 	if sp.shouldApplyMessagingRules(attrs, spanKind) {
 		newName = sp.enforceMessagingSpanName(span, attrs)
+		if newName != originalName {
+			sp.telemetry.RecordProcessorSemconvSpanNamesEnforcedDataPoint(ctx, 1, metadata.AttributeConventionTypeMessaging)
+		}
 	}
 	
 	// Apply custom rules
 	for _, rule := range sp.customRules {
 		if sp.matchesConditions(attrs, rule.conditions) {
 			if rule.pattern.MatchString(newName) {
+				old := newName
 				newName = rule.pattern.ReplaceAllString(newName, rule.replacement)
+				if old != newName {
+					sp.telemetry.RecordProcessorSemconvSpanNamesEnforcedDataPoint(ctx, 1, metadata.AttributeConventionTypeCustom)
+				}
 			}
 		}
 	}

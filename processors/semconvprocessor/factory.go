@@ -10,6 +10,8 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/processor/processorhelper"
+
+	"github.com/cedricziel/semconvprocessor/processors/semconvprocessor/internal/metadata"
 )
 
 const (
@@ -42,7 +44,11 @@ func createTracesProcessor(
 	cfg component.Config,
 	nextConsumer consumer.Traces,
 ) (processor.Traces, error) {
-	sp := newSemconvProcessor(set.Logger, cfg.(*Config))
+	telemetryBuilder, err := metadata.NewTelemetryBuilder(set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	sp := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder)
 	return processorhelper.NewTraces(
 		ctx,
 		set,
@@ -50,6 +56,9 @@ func createTracesProcessor(
 		nextConsumer,
 		sp.processTraces,
 		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: true}),
+		processorhelper.WithShutdown(func(context.Context) error {
+			return telemetryBuilder.Shutdown(ctx)
+		}),
 	)
 }
 
@@ -60,7 +69,11 @@ func createMetricsProcessor(
 	cfg component.Config,
 	nextConsumer consumer.Metrics,
 ) (processor.Metrics, error) {
-	sp := newSemconvProcessor(set.Logger, cfg.(*Config))
+	telemetryBuilder, err := metadata.NewTelemetryBuilder(set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	sp := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder)
 	return processorhelper.NewMetrics(
 		ctx,
 		set,
@@ -68,6 +81,9 @@ func createMetricsProcessor(
 		nextConsumer,
 		sp.processMetrics,
 		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: true}),
+		processorhelper.WithShutdown(func(context.Context) error {
+			return telemetryBuilder.Shutdown(ctx)
+		}),
 	)
 }
 
@@ -78,7 +94,11 @@ func createLogsProcessor(
 	cfg component.Config,
 	nextConsumer consumer.Logs,
 ) (processor.Logs, error) {
-	sp := newSemconvProcessor(set.Logger, cfg.(*Config))
+	telemetryBuilder, err := metadata.NewTelemetryBuilder(set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	sp := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder)
 	return processorhelper.NewLogs(
 		ctx,
 		set,
@@ -86,5 +106,8 @@ func createLogsProcessor(
 		nextConsumer,
 		sp.processLogs,
 		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: true}),
+		processorhelper.WithShutdown(func(context.Context) error {
+			return telemetryBuilder.Shutdown(ctx)
+		}),
 	)
 }

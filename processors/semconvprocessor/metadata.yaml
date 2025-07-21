@@ -1,0 +1,72 @@
+type: semconv
+
+status:
+  class: processor
+  stability:
+    development: [metrics, traces, logs]
+
+telemetry:
+  metrics:
+    processor_semconv_attributes_renamed:
+      enabled: true
+      description: Number of attributes renamed by the processor
+      unit: "{operations}"
+      sum:
+        value_type: int
+        monotonic: true
+
+    processor_semconv_attributes_copied:
+      enabled: true
+      description: Number of attributes copied by the processor
+      unit: "{operations}"
+      sum:
+        value_type: int
+        monotonic: true
+
+    processor_semconv_attributes_moved:
+      enabled: true
+      description: Number of attributes moved by the processor
+      unit: "{operations}"
+      sum:
+        value_type: int
+        monotonic: true
+
+    processor_semconv_spans_processed:
+      enabled: true
+      description: Number of spans processed by the processor
+      unit: "{spans}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes:
+        - signal_type
+
+    processor_semconv_span_names_enforced:
+      enabled: true
+      description: Number of span names changed to match semantic conventions
+      unit: "{operations}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes:
+        - convention_type
+
+    processor_semconv_processing_duration:
+      enabled: true
+      description: Time taken to process a batch of telemetry
+      unit: ms
+      histogram:
+        value_type: double
+        bucket_boundaries: [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100]
+      attributes:
+        - signal_type
+
+    processor_semconv_errors:
+      enabled: true
+      description: Number of errors encountered during processing
+      unit: "{errors}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes:
+        - error_type
