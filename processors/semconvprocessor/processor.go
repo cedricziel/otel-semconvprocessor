@@ -260,6 +260,14 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 				span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
 			}
 			
+			// Record what would be enforced in enrich mode
+			sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
+				metric.WithAttributes(
+					attribute.String("rule_id", rule.ID),
+					attribute.String("operation_type", operationType),
+					attribute.String("mode", "enrich"),
+				))
+			
 		case ModeEnforce:
 			// Override span name
 			originalName := span.Name()
@@ -272,19 +280,20 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 			if operationType != "" {
 				span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
 			}
+			
+			// Record actual enforcement
+			sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
+				metric.WithAttributes(
+					attribute.String("rule_id", rule.ID),
+					attribute.String("operation_type", operationType),
+					attribute.String("mode", "enforce"),
+				))
 		}
 		
 		// Track operation name for benchmark mode
 		if sp.config.Benchmark {
 			sp.operationCount[operationName]++
 		}
-		
-		// Record metrics
-		sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
-			metric.WithAttributes(
-				attribute.String("rule_id", rule.ID),
-				attribute.String("operation_type", operationType),
-			))
 		
 		// First match wins - stop processing
 		break

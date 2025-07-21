@@ -64,6 +64,7 @@ Number of span names changed to match semantic conventions
 | ---- | ----------- | ------ |
 | rule_id | The ID of the rule that matched | Any Str |
 | operation_type | The type of operation extracted from the span | Any Str |
+| mode | The processing mode (enrich or enforce) | Str: ``enrich``, ``enforce`` |
 
 ### otelcol_processor_semconv_spans_processed
 

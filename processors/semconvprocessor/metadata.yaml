@@ -20,6 +20,10 @@ attributes:
     description: The type of error encountered
     type: string
     enum: [validation, processing]
+  mode:
+    description: The processing mode (enrich or enforce)
+    type: string
+    enum: [enrich, enforce]
 
 telemetry:
   metrics:
@@ -43,6 +47,7 @@ telemetry:
       attributes:
         - rule_id
         - operation_type
+        - mode
 
     processor_semconv_processing_duration:
       enabled: true
