@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an OpenTelemetry Collector project that implements a custom processor called `semconvprocessor` for transforming semantic conventions in telemetry data. The project uses the OpenTelemetry Collector Builder (OCB) to create a custom collector distribution.
+This is an OpenTelemetry Collector project that implements a custom processor called `semconvprocessor` for enforcing semantic conventions to reduce cardinality in telemetry data. The primary focus is on normalizing span names to prevent cardinality explosion while maintaining observability. The project uses the OpenTelemetry Collector Builder (OCB) to create a custom collector distribution.
 
 ## Build Commands
 
@@ -40,14 +40,23 @@ cd processors/semconvprocessor && go build .
 
 ### Key Design Patterns
 
-1. **Processor Implementation**: The processor implements separate processing functions for traces, metrics, and logs, all sharing a common `processAttributes` method that applies the configured mappings.
+1. **Dual Purpose**: The processor serves two main functions:
+   - **Attribute Mappings**: Migrates attributes to newer semantic conventions
+   - **Span Name Enforcement**: Normalizes span names to maintain low cardinality
 
-2. **Attribute Mappings**: Supports three actions:
-   - `rename`: Renames an attribute and removes the old one
-   - `copy`: Copies an attribute value to a new name, keeping the original
-   - `move`: Alias for rename
+2. **Span Name Normalization**:
+   - HTTP: Uses `url.template` or `http.route` when available, removes query params and normalizes path parameters
+   - Database: Prefers `db.query.summary` or `db.operation.name` over raw queries
+   - Messaging: Uses `messaging.destination.template` for consistent naming
+   - Custom Rules: Regex-based transformations with conditional application
 
-3. **OpenTelemetry API Usage**:
+3. **Cardinality Reduction Strategies**:
+   - Replaces UUIDs and numeric IDs with placeholders (`{id}`)
+   - Strips query parameters from HTTP paths
+   - Uses templated names instead of dynamic values
+   - Compiles regex patterns at initialization for performance
+
+4. **OpenTelemetry API Usage**:
    - Uses `pcommon.Map` for attribute maps (not `plog.Map`)
    - Uses `processorhelper.NewTraces/NewMetrics/NewLogs` (not the older `NewTracesProcessor` variants)
    - Compatible with collector v0.130.0 and pdata v1.36.0

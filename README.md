@@ -1,6 +1,6 @@
 # OpenTelemetry Collector - Semantic Convention Processor
 
-A custom OpenTelemetry Collector processor that transforms semantic conventions in telemetry data.
+A custom OpenTelemetry Collector processor that enforces semantic conventions to reduce cardinality in telemetry data, particularly for span names.
 
 ## Project Structure
 
@@ -36,7 +36,7 @@ Run the collector with a configuration file:
 
 ## Configuration
 
-The semconv processor transforms attributes in traces, metrics, and logs based on configured mappings.
+The semconv processor enforces semantic conventions and transforms telemetry data to maintain low cardinality. It supports both attribute mappings and span name normalization.
 
 ### Processor Configuration
 
@@ -59,6 +59,16 @@ The semconv processor transforms attributes in traces, metrics, and logs based o
 - **copy**: Copies the attribute value to a new name while preserving the original
 - **move**: Alias for rename
 
+### Span Name Rules Configuration
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `span_name_rules.enabled` | bool | Enables span name enforcement |
+| `span_name_rules.http` | object | HTTP-specific span naming rules |
+| `span_name_rules.database` | object | Database-specific span naming rules |
+| `span_name_rules.messaging` | object | Messaging-specific span naming rules |
+| `span_name_rules.custom_rules` | []rule | Custom regex-based transformation rules |
+
 ### Example Configuration
 
 ```yaml
@@ -71,6 +81,7 @@ receivers:
 processors:
   semconv:
     enabled: true
+    # Attribute mappings for semantic convention migration
     mappings:
       - from: "http.method"
         to: "http.request.method"
@@ -78,9 +89,35 @@ processors:
       - from: "http.status_code"
         to: "http.response.status_code"
         action: "rename"
-      - from: "service.version"
-        to: "service.version.string"
-        action: "copy"
+    
+    # Span name enforcement rules to reduce cardinality
+    span_name_rules:
+      enabled: true
+      
+      # HTTP span name rules
+      http:
+        use_url_template: true      # Use url.template or http.route if available
+        remove_query_params: true   # Strip query parameters from URLs
+        remove_path_params: true    # Replace dynamic path segments with placeholders
+      
+      # Database span name rules  
+      database:
+        use_query_summary: true     # Use db.query.summary for span names
+        use_operation_name: true    # Use db.operation.name as fallback
+      
+      # Messaging span name rules
+      messaging:
+        use_destination_template: true  # Use messaging.destination.template
+      
+      # Custom transformation rules
+      custom_rules:
+        - pattern: "^GET /api/users/[0-9]+/profile$"
+          replacement: "GET /api/users/{id}/profile"
+        - pattern: "^/v[0-9]+/(.*)$"
+          replacement: "/v{version}/$1"
+          conditions:
+            - attribute: "service.name"
+              value: "api-gateway"
 
 exporters:
   debug:
@@ -101,6 +138,17 @@ service:
       processors: [semconv]
       exporters: [debug]
 ```
+
+### Cardinality Reduction Examples
+
+The processor transforms high-cardinality span names into low-cardinality equivalents:
+
+| Original Span Name | Transformed Span Name | Rule Applied |
+|--------------------|----------------------|---------------|
+| `GET /users/12345/profile` | `GET /users/{id}/profile` | HTTP path parameter normalization |
+| `GET /search?q=opentelemetry&limit=10` | `GET /search` | Query parameter removal |
+| `SELECT * FROM users WHERE id = 12345` | `SELECT users` | Database query summary |
+| `publish user.12345.notifications` | `publish user.{id}.notifications` | Custom rule |
 
 ## Development
 
