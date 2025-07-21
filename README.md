@@ -29,10 +29,40 @@ The build process creates the `otelcol-semconv` binary in the `./otelcol-semconv
 
 ## Running the Collector
 
+### Local Binary
+
 Run the collector with a configuration file:
 ```bash
 ./otelcol-semconv/otelcol-semconv --config=config.yaml
 ```
+
+### Docker
+
+Build and run the collector using Docker:
+
+```bash
+# Build the Docker image
+docker build -t otelcol-semconv:latest .
+
+# Run the container
+docker run -d \
+  --name otelcol-semconv \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  -p 8888:8888 \
+  -v $(pwd)/config.yaml:/etc/otelcol/config.yaml:ro \
+  otelcol-semconv:latest
+
+# Or use docker-compose for a complete setup with Jaeger
+docker-compose up -d
+```
+
+The Docker image includes:
+- Multi-stage build for minimal image size
+- Non-root user for security
+- Health check endpoint
+- All standard OTLP ports exposed
+- Volume mount for configuration
 
 ## Configuration
 
@@ -207,6 +237,32 @@ Monitor processor effectiveness with built-in metrics:
 - `otelcol_processor_semconv_original_span_name_count` - Original cardinality (benchmark mode)
 - `otelcol_processor_semconv_reduced_span_name_count` - Reduced cardinality (benchmark mode)
 
+### Self-Monitoring
+
+The collector configuration includes self-monitoring capabilities:
+
+1. **Prometheus Receiver**: Scrapes the collector's own metrics endpoint
+2. **Resource Processor**: Enriches internal metrics with collector metadata
+3. **Unified Pipeline**: Collector metrics flow through the same pipeline as application metrics
+
+This allows you to monitor the collector's health and the semconv processor's effectiveness using the same tools as your application monitoring.
+
+Access metrics at:
+- Prometheus format: `http://localhost:8888/metrics`
+- Test self-monitoring: `./test-self-monitoring.sh`
+
+Example PromQL queries:
+```promql
+# Spans processed per second by rule
+rate(otelcol_processor_semconv_spans_processed[1m])
+
+# Cardinality reduction ratio (benchmark mode)
+otelcol_processor_semconv_reduced_span_name_count / otelcol_processor_semconv_original_span_name_count
+
+# Processing latency percentiles
+histogram_quantile(0.99, otelcol_processor_semconv_processing_duration_bucket)
+```
+
 ## Development
 
 ### Testing Changes
@@ -216,6 +272,57 @@ Build and test the processor:
 cd processors/semconvprocessor
 go test ./...
 ```
+
+### Docker Development
+
+The Docker image provides a production-ready deployment:
+
+```bash
+# Build image with specific tag
+docker build -t otelcol-semconv:dev .
+
+# Run with custom config
+docker run -d \
+  --name otelcol-test \
+  -v $(pwd)/custom-config.yaml:/etc/otelcol/config.yaml:ro \
+  -p 4317:4317 \
+  otelcol-semconv:dev
+
+# View logs
+docker logs -f otelcol-test
+
+# Access health check
+curl http://localhost:13133/
+
+# View metrics
+curl http://localhost:8888/metrics
+```
+
+### Docker Compose Setup
+
+The included `docker-compose.yaml` provides a complete testing environment:
+
+```bash
+# Start all services (collector + Jaeger)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f otelcol-semconv
+
+# Stop services
+docker-compose down
+
+# Rebuild after changes
+docker-compose build
+docker-compose up -d
+```
+
+Access services:
+- OTLP gRPC: `localhost:4317`
+- OTLP HTTP: `localhost:4318`
+- Metrics: `http://localhost:8888/metrics`
+- Health: `http://localhost:13133/`
+- Jaeger UI: `http://localhost:16686`
 
 ### Updating Dependencies
 

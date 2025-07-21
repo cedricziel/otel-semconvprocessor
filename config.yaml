@@ -1,0 +1,134 @@
+# Sample OpenTelemetry Collector configuration with semconv processor
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  
+  # Prometheus receiver to scrape collector's own metrics
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'otelcol-internal'
+          scrape_interval: 10s
+          static_configs:
+            - targets: ['localhost:8888']
+              labels:
+                service: 'otelcol-semconv'
+
+processors:
+  # Batch processor for better performance
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  
+  # Resource processor to enrich collector internal metrics
+  resource/collector-telemetry:
+    attributes:
+      - key: collector.name
+        value: "otelcol-semconv"
+        action: insert
+      - key: collector.version
+        value: "0.130.0"
+        action: insert
+      - key: telemetry.source
+        value: "internal"
+        action: insert
+
+  # Semantic convention processor for cardinality reduction
+  semconv:
+    enabled: true
+    benchmark: true  # Enable cardinality tracking metrics
+    span_processing:
+      enabled: true
+      mode: "enforce"  # Use "enrich" to only add attributes without changing span names
+      preserve_original_name: true
+      operation_name_attribute: "operation.name"
+      operation_type_attribute: "operation.type"
+      original_name_attribute: "span.name.original"
+      rules:
+        # HTTP route normalization (highest priority)
+        - id: "http_routes"
+          priority: 100
+          condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
+          operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+          operation_type: '"http"'
+
+        # HTTP path normalization with custom function
+        - id: "http_paths"
+          priority: 200
+          condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
+          operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
+          operation_type: '"http"'
+
+        # Database query processing
+        - id: "database_queries"
+          priority: 300
+          condition: 'attributes["db.statement"] != nil'
+          operation_name: 'ParseSQL(attributes["db.statement"])'
+          operation_type: 'attributes["db.system"]'
+
+        # gRPC operations
+        - id: "grpc_operations"
+          priority: 400
+          condition: 'attributes["rpc.system"] == "grpc" and attributes["rpc.method"] != nil'
+          operation_name: 'Concat([attributes["rpc.service"], attributes["rpc.method"]], "/")'
+          operation_type: '"grpc"'
+
+        # Messaging operations
+        - id: "messaging"
+          priority: 500
+          condition: 'attributes["messaging.operation"] != nil and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat([attributes["messaging.operation"], attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+
+exporters:
+  # Debug exporter for testing
+  debug:
+    verbosity: basic
+    sampling_initial: 10
+    sampling_thereafter: 100
+
+  # OTLP exporter to Jaeger
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prometheus metrics
+  prometheus:
+    endpoint: 0.0.0.0:8888
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, zpages]
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [semconv, batch]
+      exporters: [debug, otlp/jaeger]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [resource/collector-telemetry, batch]
+      exporters: [prometheus]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888

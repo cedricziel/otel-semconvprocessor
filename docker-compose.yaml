@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  otelcol-semconv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: otelcol-semconv:latest
+    container_name: otelcol-semconv
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8888:8888"   # Prometheus metrics
+      - "13133:13133" # Health check extension
+      - "55679:55679" # zPages extension
+    environment:
+      - OTEL_LOG_LEVEL=debug
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Example Jaeger backend for testing
+  jaeger:
+    image: jaegertracing/all-in-one:1.56
+    container_name: jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "14250:14250" # gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
+  # Example application that sends telemetry
+  demo-app:
+    image: otel/opentelemetry-collector-contrib:0.130.0
+    container_name: demo-app
+    command: ["--config=/etc/otel-demo-config.yaml"]
+    volumes:
+      - ./demo-config.yaml:/etc/otel-demo-config.yaml:ro
+    depends_on:
+      - otelcol-semconv
+    profiles:
+      - demo

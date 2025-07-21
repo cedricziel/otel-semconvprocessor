@@ -7,14 +7,21 @@ dist:
 exporters:
   - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.130.0
   - gomod: go.opentelemetry.io/collector/exporter/otlpexporter v0.130.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusexporter v0.130.0
 
 processors:
   - gomod: github.com/cedricziel/semconvprocessor/processors/semconvprocessor v0.0.0
     path: ./processors/semconvprocessor
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.130.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourceprocessor v0.130.0
 
 receivers:
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.130.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/prometheusreceiver v0.130.0
+
+extensions:
+  - gomod: go.opentelemetry.io/collector/extension/zpagesextension v0.130.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.130.0
 
 replaces:
   - github.com/cedricziel/semconvprocessor/processors/semconvprocessor => ./processors/semconvprocessor

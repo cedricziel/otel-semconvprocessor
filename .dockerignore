@@ -1,0 +1,49 @@
+# Git files
+.git/
+.gitignore
+
+# Build artifacts
+otelcol-semconv/
+**/*.exe
+**/*.dll
+**/*.so
+**/*.dylib
+
+# Go build cache
+**/go.sum
+**/vendor/
+
+# Test files
+**/*_test.go
+**/testdata/
+
+# Documentation
+*.md
+!processors/semconvprocessor/documentation.md
+docs/
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Docker files (avoid recursion)
+Dockerfile*
+docker-compose*.yaml
+docker-compose*.yml
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Coverage files
+*.out
+coverage.html
+coverage.xml
