@@ -6,6 +6,7 @@ package semconvprocessor
 import (
 	"context"
 
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -103,7 +104,7 @@ func (sp *semconvProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog
 }
 
 // processAttributes applies configured mappings to attributes
-func (sp *semconvProcessor) processAttributes(attrs plog.Map) {
+func (sp *semconvProcessor) processAttributes(attrs pcommon.Map) {
 	for _, mapping := range sp.config.Mappings {
 		switch mapping.Action {
 		case "rename":
