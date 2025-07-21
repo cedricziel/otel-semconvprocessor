@@ -107,7 +107,7 @@ func (sp *SpanProcessingConfig) Validate() error {
 		sp.OperationTypeAttribute = "operation.type"
 	}
 	if sp.OriginalNameAttribute == "" {
-		sp.OriginalNameAttribute = "span.name.original"
+		sp.OriginalNameAttribute = "name.original"
 	}
 	
 	// Validate rules

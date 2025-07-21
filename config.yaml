@@ -47,7 +47,7 @@ processors:
       preserve_original_name: true
       operation_name_attribute: "operation.name"
       operation_type_attribute: "operation.type"
-      original_name_attribute: "span.name.original"
+      original_name_attribute: "name.original"
       rules:
         # HTTP route normalization (highest priority)
         - id: "http_routes"

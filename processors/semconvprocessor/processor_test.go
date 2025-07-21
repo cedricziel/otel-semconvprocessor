@@ -126,7 +126,7 @@ func TestProcessTraces_EnforceMode(t *testing.T) {
 	assert.Equal(t, "POST /api/users", resultSpan.Name())
 	
 	// Original name should be preserved as attribute
-	val, exists := resultSpan.Attributes().Get("span.name.original")
+	val, exists := resultSpan.Attributes().Get("name.original")
 	assert.True(t, exists)
 	assert.Equal(t, "original_name", val.AsString())
 	

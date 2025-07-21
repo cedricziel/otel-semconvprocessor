@@ -89,7 +89,7 @@ processors:
       operation_name_attribute: "operation.name"
       operation_type_attribute: "operation.type" 
       preserve_original_name: true
-      original_name_attribute: "span.name.original"
+      original_name_attribute: "name.original"
       rules:
         - id: "http_routes"
           priority: 100

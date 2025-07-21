@@ -245,7 +245,7 @@ func TestSpanProcessingConfig_DefaultValues(t *testing.T) {
 	assert.Equal(t, ModeEnrich, sp.Mode)
 	assert.Equal(t, "operation.name", sp.OperationNameAttribute)
 	assert.Equal(t, "operation.type", sp.OperationTypeAttribute)
-	assert.Equal(t, "span.name.original", sp.OriginalNameAttribute)
+	assert.Equal(t, "name.original", sp.OriginalNameAttribute)
 }
 
 func TestSpanProcessingConfig_RuleSorting(t *testing.T) {
