@@ -10,10 +10,12 @@ attributes:
     description: The type of signal being processed
     type: string
     enum: [traces, metrics, logs]
-  convention_type:
-    description: The type of semantic convention being enforced
+  rule_id:
+    description: The ID of the rule that matched
     type: string
-    enum: [http, database, messaging, custom]
+  operation_type:
+    description: The type of operation extracted from the span
+    type: string
   error_type:
     description: The type of error encountered
     type: string
@@ -39,7 +41,8 @@ telemetry:
         value_type: int
         monotonic: true
       attributes:
-        - convention_type
+        - rule_id
+        - operation_type
 
     processor_semconv_processing_duration:
       enabled: true

@@ -4,6 +4,10 @@
 package semconvprocessor
 
 import (
+	"errors"
+	"fmt"
+	"sort"
+
 	"go.opentelemetry.io/collector/component"
 )
 
@@ -15,84 +19,125 @@ type Config struct {
 	// Benchmark enables cardinality metrics tracking
 	Benchmark bool `mapstructure:"benchmark"`
 	
-	// SpanNameRules defines rules for enforcing span name conventions
-	SpanNameRules SpanNameRules `mapstructure:"span_name_rules"`
+	// SpanProcessing defines rules for processing span names
+	SpanProcessing SpanProcessingConfig `mapstructure:"span_processing"`
 }
 
-// SpanNameRules defines rules for enforcing low-cardinality span names
-type SpanNameRules struct {
-	// Enabled determines if span name enforcement is enabled
+// SpanProcessingConfig defines configuration for span name processing
+type SpanProcessingConfig struct {
+	// Enabled determines if span processing is enabled
 	Enabled bool `mapstructure:"enabled"`
 	
-	// HTTPRules defines rules for HTTP span names
-	HTTP HTTPSpanNameRules `mapstructure:"http"`
+	// Mode: "enrich" (add attributes only) or "enforce" (override span names)
+	Mode ProcessingMode `mapstructure:"mode"`
 	
-	// DatabaseRules defines rules for database span names
-	Database DatabaseSpanNameRules `mapstructure:"database"`
+	// OperationNameAttribute is the attribute name for generated operation names
+	OperationNameAttribute string `mapstructure:"operation_name_attribute"`
 	
-	// MessagingRules defines rules for messaging span names
-	Messaging MessagingSpanNameRules `mapstructure:"messaging"`
+	// OperationTypeAttribute is the attribute name for operation types
+	OperationTypeAttribute string `mapstructure:"operation_type_attribute"`
 	
-	// CustomRules defines custom span name transformations
-	CustomRules []SpanNameRule `mapstructure:"custom_rules"`
+	// PreserveOriginalName determines if original span name should be preserved (enforce mode only)
+	PreserveOriginalName bool `mapstructure:"preserve_original_name"`
+	
+	// OriginalNameAttribute is the attribute name for storing original span name
+	OriginalNameAttribute string `mapstructure:"original_name_attribute"`
+	
+	// Rules defines OTTL rules for span name generation
+	Rules []OTTLRule `mapstructure:"rules"`
 }
 
-// HTTPSpanNameRules defines rules for HTTP span naming
-type HTTPSpanNameRules struct {
-	// UseURLTemplate uses url.template attribute if available
-	UseURLTemplate bool `mapstructure:"use_url_template"`
-	
-	// RemoveQueryParams removes query parameters from span names
-	RemoveQueryParams bool `mapstructure:"remove_query_params"`
-	
-	// RemovePathParams replaces path parameters with placeholders
-	RemovePathParams bool `mapstructure:"remove_path_params"`
-}
+// ProcessingMode defines how span names are processed
+type ProcessingMode string
 
-// DatabaseSpanNameRules defines rules for database span naming
-type DatabaseSpanNameRules struct {
-	// UseQuerySummary uses db.query.summary if available
-	UseQuerySummary bool `mapstructure:"use_query_summary"`
+const (
+	// ModeEnrich adds operation name as attribute without modifying span name
+	ModeEnrich ProcessingMode = "enrich"
 	
-	// UseOperationName uses db.operation.name if available
-	UseOperationName bool `mapstructure:"use_operation_name"`
-}
+	// ModeEnforce replaces span name with generated operation name
+	ModeEnforce ProcessingMode = "enforce"
+)
 
-// MessagingSpanNameRules defines rules for messaging span naming
-type MessagingSpanNameRules struct {
-	// UseDestinationTemplate uses messaging.destination.template if available
-	UseDestinationTemplate bool `mapstructure:"use_destination_template"`
-}
-
-// SpanNameRule defines a custom span name transformation rule
-type SpanNameRule struct {
-	// Pattern is a regex pattern to match span names
-	Pattern string `mapstructure:"pattern"`
+// OTTLRule defines a single OTTL-based rule for span name generation
+type OTTLRule struct {
+	// ID is a unique identifier for the rule
+	ID string `mapstructure:"id"`
 	
-	// Replacement is the replacement pattern (supports regex groups)
-	Replacement string `mapstructure:"replacement"`
+	// Priority determines rule evaluation order (lower number = higher priority)
+	Priority int `mapstructure:"priority"`
 	
-	// Conditions are optional attribute conditions that must be met
-	Conditions []Condition `mapstructure:"conditions"`
-}
-
-// Condition defines an attribute condition for rule application
-type Condition struct {
-	// Attribute is the attribute name to check
-	Attribute string `mapstructure:"attribute"`
+	// Condition is an OTTL expression that must evaluate to true for the rule to match
+	Condition string `mapstructure:"condition"`
 	
-	// Value is the expected value (exact match)
-	Value string `mapstructure:"value"`
+	// OperationName is an OTTL expression that generates the operation name
+	OperationName string `mapstructure:"operation_name"`
+	
+	// OperationType is an optional OTTL expression that generates the operation type
+	OperationType string `mapstructure:"operation_type"`
 }
 
 // Validate checks if the configuration is valid
 func (cfg *Config) Validate() error {
-	// Validate custom rules have valid regex patterns
-	for _, rule := range cfg.SpanNameRules.CustomRules {
-		if rule.Pattern != "" {
-			// This will be validated when compiling regex in processor
+	if cfg.SpanProcessing.Enabled {
+		if err := cfg.SpanProcessing.Validate(); err != nil {
+			return fmt.Errorf("span_processing validation failed: %w", err)
 		}
 	}
+	return nil
+}
+
+// Validate checks if the span processing configuration is valid
+func (sp *SpanProcessingConfig) Validate() error {
+	// Validate mode
+	switch sp.Mode {
+	case ModeEnrich, ModeEnforce:
+		// Valid modes
+	case "":
+		// Default to enrich if not specified
+		sp.Mode = ModeEnrich
+	default:
+		return fmt.Errorf("invalid mode %q, must be 'enrich' or 'enforce'", sp.Mode)
+	}
+	
+	// Set default attribute names if not specified
+	if sp.OperationNameAttribute == "" {
+		sp.OperationNameAttribute = "operation.name"
+	}
+	if sp.OperationTypeAttribute == "" {
+		sp.OperationTypeAttribute = "operation.type"
+	}
+	if sp.OriginalNameAttribute == "" {
+		sp.OriginalNameAttribute = "span.name.original"
+	}
+	
+	// Validate rules
+	if len(sp.Rules) == 0 {
+		return errors.New("at least one rule must be defined")
+	}
+	
+	seenIDs := make(map[string]bool)
+	for i, rule := range sp.Rules {
+		if rule.ID == "" {
+			return fmt.Errorf("rule at index %d has empty ID", i)
+		}
+		if seenIDs[rule.ID] {
+			return fmt.Errorf("duplicate rule ID: %s", rule.ID)
+		}
+		seenIDs[rule.ID] = true
+		
+		if rule.Condition == "" {
+			return fmt.Errorf("rule %s has empty condition", rule.ID)
+		}
+		if rule.OperationName == "" {
+			return fmt.Errorf("rule %s has empty operation_name", rule.ID)
+		}
+	}
+	
+	// Sort rules by priority for consistent evaluation order
+	sort.Slice(sp.Rules, func(i, j int) bool {
+		return sp.Rules[i].Priority < sp.Rules[j].Priority
+	})
+	
 	return nil
 }
 

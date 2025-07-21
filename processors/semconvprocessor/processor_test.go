@@ -23,7 +23,8 @@ func TestProcessTraces_Disabled(t *testing.T) {
 	}
 	
 	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-	processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
 	
 	traces := ptrace.NewTraces()
 	result, err := processor.processTraces(context.Background(), traces)
@@ -32,169 +33,198 @@ func TestProcessTraces_Disabled(t *testing.T) {
 	assert.Equal(t, traces, result)
 }
 
-func TestEnforceSpanName_HTTP(t *testing.T) {
-	tests := []struct {
-		name         string
-		config       HTTPSpanNameRules
-		spanName     string
-		attributes   map[string]string
-		expectedName string
-	}{
-		{
-			name: "use url template",
-			config: HTTPSpanNameRules{
-				UseURLTemplate: true,
-			},
-			spanName: "GET /users/12345",
-			attributes: map[string]string{
-				"http.method":  "GET",
-				"url.template": "/users/{id}",
-			},
-			expectedName: "GET /users/{id}",
-		},
-		{
-			name: "use http route",
-			config: HTTPSpanNameRules{
-				UseURLTemplate: true,
-			},
-			spanName: "GET /api/v1/users/12345",
-			attributes: map[string]string{
-				"http.request.method": "GET",
-				"http.route":          "/api/v1/users/:id",
-			},
-			expectedName: "GET /api/v1/users/:id",
-		},
-		{
-			name: "remove query params",
-			config: HTTPSpanNameRules{
-				RemoveQueryParams: true,
-			},
-			spanName: "GET /search?q=test&limit=10",
-			attributes: map[string]string{
-				"http.method": "GET",
-				"url.path":    "/search?q=test&limit=10",
-			},
-			expectedName: "GET /search",
-		},
-		{
-			name: "normalize path params - UUID",
-			config: HTTPSpanNameRules{
-				RemovePathParams: true,
-			},
-			spanName: "GET /users/550e8400-e29b-41d4-a716-446655440000/profile",
-			attributes: map[string]string{
-				"http.method": "GET",
-				"url.path":    "/users/550e8400-e29b-41d4-a716-446655440000/profile",
-			},
-			expectedName: "GET /users/{id}/profile",
-		},
-		{
-			name: "normalize path params - numeric",
-			config: HTTPSpanNameRules{
-				RemovePathParams: true,
-			},
-			spanName: "GET /api/v2/items/12345/details",
-			attributes: map[string]string{
-				"http.method": "GET",
-				"url.path":    "/api/v2/items/12345/details",
-			},
-			expectedName: "GET /api/v2/items/{id}/details",
-		},
-		{
-			name: "method only when no target",
-			config: HTTPSpanNameRules{
-				UseURLTemplate: true,
-			},
-			spanName: "some_operation",
-			attributes: map[string]string{
-				"http.method": "POST",
-			},
-			expectedName: "POST",
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Enabled: true,
-				SpanNameRules: SpanNameRules{
-					Enabled: true,
-					HTTP:    tt.config,
+func TestProcessTraces_EnrichMode(t *testing.T) {
+	cfg := &Config{
+		Enabled: true,
+		SpanProcessing: SpanProcessingConfig{
+			Enabled: true,
+			Mode:    ModeEnrich,
+			Rules: []OTTLRule{
+				{
+					ID:            "http_route",
+					Priority:      100,
+					Condition:     `attributes["http.method"] != nil and attributes["http.route"] != nil`,
+					OperationName: `Concat([attributes["http.method"], attributes["http.route"]], " ")`,
+					OperationType: `"http"`,
 				},
-			}
-			
-			telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-			processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
-			
-			span := ptrace.NewSpan()
-			span.SetName(tt.spanName)
-			attrs := span.Attributes()
-			
-			for k, v := range tt.attributes {
-				attrs.PutStr(k, v)
-			}
-			
-			processor.enforceSpanName(context.Background(), span)
-			assert.Equal(t, tt.expectedName, span.Name())
-		})
+			},
+		},
 	}
+	// Let validation set defaults
+	require.NoError(t, cfg.Validate())
+	
+	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
+	
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	ss := rs.ScopeSpans().AppendEmpty()
+	span := ss.Spans().AppendEmpty()
+	span.SetName("original_name")
+	span.Attributes().PutStr("http.method", "GET")
+	span.Attributes().PutStr("http.route", "/users/{id}")
+	
+	result, err := processor.processTraces(context.Background(), traces)
+	require.NoError(t, err)
+	
+	resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	
+	// In enrich mode, span name should not change
+	assert.Equal(t, "original_name", resultSpan.Name())
+	
+	// Operation name should be added as attribute
+	val, exists := resultSpan.Attributes().Get("operation.name")
+	assert.True(t, exists)
+	assert.Equal(t, "GET /users/{id}", val.AsString())
+	
+	// Operation type should be added
+	val, exists = resultSpan.Attributes().Get("operation.type")
+	assert.True(t, exists)
+	assert.Equal(t, "http", val.AsString())
 }
 
-func TestEnforceSpanName_Database(t *testing.T) {
+func TestProcessTraces_EnforceMode(t *testing.T) {
+	cfg := &Config{
+		Enabled: true,
+		SpanProcessing: SpanProcessingConfig{
+			Enabled:              true,
+			Mode:                 ModeEnforce,
+			PreserveOriginalName: true,
+			Rules: []OTTLRule{
+				{
+					ID:            "http_route",
+					Priority:      100,
+					Condition:     `attributes["http.method"] != nil and attributes["http.route"] != nil`,
+					OperationName: `Concat([attributes["http.method"], attributes["http.route"]], " ")`,
+					OperationType: `"http"`,
+				},
+			},
+		},
+	}
+	// Let validation set defaults
+	require.NoError(t, cfg.Validate())
+	
+	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
+	
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	ss := rs.ScopeSpans().AppendEmpty()
+	span := ss.Spans().AppendEmpty()
+	span.SetName("original_name")
+	span.Attributes().PutStr("http.method", "POST")
+	span.Attributes().PutStr("http.route", "/api/users")
+	
+	result, err := processor.processTraces(context.Background(), traces)
+	require.NoError(t, err)
+	
+	resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	
+	// In enforce mode, span name should change
+	assert.Equal(t, "POST /api/users", resultSpan.Name())
+	
+	// Original name should be preserved as attribute
+	val, exists := resultSpan.Attributes().Get("span.name.original")
+	assert.True(t, exists)
+	assert.Equal(t, "original_name", val.AsString())
+	
+	// Operation type should be added
+	val, exists = resultSpan.Attributes().Get("operation.type")
+	assert.True(t, exists)
+	assert.Equal(t, "http", val.AsString())
+}
+
+func TestProcessTraces_RulePriority(t *testing.T) {
+	cfg := &Config{
+		Enabled: true,
+		SpanProcessing: SpanProcessingConfig{
+			Enabled: true,
+			Mode:    ModeEnforce,
+			Rules: []OTTLRule{
+				{
+					ID:            "fallback",
+					Priority:      1000,
+					Condition:     `true`,
+					OperationName: `"fallback_operation"`,
+				},
+				{
+					ID:            "specific",
+					Priority:      100,
+					Condition:     `attributes["service.name"] == "test"`,
+					OperationName: `"specific_operation"`,
+				},
+			},
+		},
+	}
+	require.NoError(t, cfg.Validate())
+	
+	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
+	
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	ss := rs.ScopeSpans().AppendEmpty()
+	span := ss.Spans().AppendEmpty()
+	span.SetName("original")
+	span.Attributes().PutStr("service.name", "test")
+	
+	result, err := processor.processTraces(context.Background(), traces)
+	require.NoError(t, err)
+	
+	resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+	
+	// Lower priority number should win
+	assert.Equal(t, "specific_operation", resultSpan.Name())
+}
+
+func TestProcessTraces_CustomFunctions(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       DatabaseSpanNameRules
-		spanName     string
-		attributes   map[string]string
-		expectedName string
+		name           string
+		rule           OTTLRule
+		attributes     map[string]string
+		expectedName   string
 	}{
 		{
-			name: "use query summary",
-			config: DatabaseSpanNameRules{
-				UseQuerySummary: true,
+			name: "NormalizePath with UUID",
+			rule: OTTLRule{
+				ID:            "normalize_path",
+				Priority:      100,
+				Condition:     `attributes["url.path"] != nil`,
+				OperationName: `NormalizePath(attributes["url.path"])`,
 			},
-			spanName: "SELECT * FROM users WHERE id = ?",
 			attributes: map[string]string{
-				"db.system":        "postgresql",
-				"db.query.summary": "SELECT users",
+				"url.path": "/users/550e8400-e29b-41d4-a716-446655440000/profile",
+			},
+			expectedName: "/users/{id}/profile",
+		},
+		{
+			name: "ParseSQL SELECT",
+			rule: OTTLRule{
+				ID:            "parse_sql",
+				Priority:      100,
+				Condition:     `attributes["db.statement"] != nil`,
+				OperationName: `ParseSQL(attributes["db.statement"])`,
+			},
+			attributes: map[string]string{
+				"db.statement": "SELECT * FROM users WHERE id = ?",
 			},
 			expectedName: "SELECT users",
 		},
 		{
-			name: "use operation name",
-			config: DatabaseSpanNameRules{
-				UseOperationName: true,
+			name: "RemoveQueryParams",
+			rule: OTTLRule{
+				ID:            "remove_query",
+				Priority:      100,
+				Condition:     `attributes["http.target"] != nil`,
+				OperationName: `RemoveQueryParams(attributes["http.target"])`,
 			},
-			spanName: "complex query",
 			attributes: map[string]string{
-				"db.system":         "mysql",
-				"db.operation.name": "FindUserById",
+				"http.target": "/search?q=test&limit=10",
 			},
-			expectedName: "FindUserById",
-		},
-		{
-			name: "fallback to db.name",
-			config: DatabaseSpanNameRules{
-				UseQuerySummary:  true,
-				UseOperationName: true,
-			},
-			spanName: "some query",
-			attributes: map[string]string{
-				"db.system": "redis",
-				"db.name":   "cache",
-			},
-			expectedName: "cache",
-		},
-		{
-			name: "fallback to db.system",
-			config: DatabaseSpanNameRules{
-				UseQuerySummary: true,
-			},
-			spanName: "query",
-			attributes: map[string]string{
-				"db.system": "mongodb",
-			},
-			expectedName: "mongodb",
+			expectedName: "/search",
 		},
 	}
 	
@@ -202,234 +232,60 @@ func TestEnforceSpanName_Database(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{
 				Enabled: true,
-				SpanNameRules: SpanNameRules{
-					Enabled:  true,
-					Database: tt.config,
+				SpanProcessing: SpanProcessingConfig{
+					Enabled: true,
+					Mode:    ModeEnforce,
+					Rules:   []OTTLRule{tt.rule},
 				},
 			}
+			require.NoError(t, cfg.Validate())
 			
 			telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-			processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
+			processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+			require.NoError(t, err)
 			
-			span := ptrace.NewSpan()
-			span.SetName(tt.spanName)
-			attrs := span.Attributes()
+			traces := ptrace.NewTraces()
+			rs := traces.ResourceSpans().AppendEmpty()
+			ss := rs.ScopeSpans().AppendEmpty()
+			span := ss.Spans().AppendEmpty()
+			span.SetName("original")
 			
 			for k, v := range tt.attributes {
-				attrs.PutStr(k, v)
+				span.Attributes().PutStr(k, v)
 			}
 			
-			processor.enforceSpanName(context.Background(), span)
-			assert.Equal(t, tt.expectedName, span.Name())
+			result, err := processor.processTraces(context.Background(), traces)
+			require.NoError(t, err)
+			
+			resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+			assert.Equal(t, tt.expectedName, resultSpan.Name())
 		})
 	}
 }
 
-func TestEnforceSpanName_Messaging(t *testing.T) {
-	tests := []struct {
-		name         string
-		config       MessagingSpanNameRules
-		spanName     string
-		attributes   map[string]string
-		expectedName string
-	}{
-		{
-			name: "use destination template",
-			config: MessagingSpanNameRules{
-				UseDestinationTemplate: true,
-			},
-			spanName: "publish to dynamic topic",
-			attributes: map[string]string{
-				"messaging.system":                "kafka",
-				"messaging.operation.type":        "publish",
-				"messaging.destination.template":  "orders.{region}.events",
-			},
-			expectedName: "publish orders.{region}.events",
-		},
-		{
-			name: "use destination name as fallback",
-			config: MessagingSpanNameRules{
-				UseDestinationTemplate: true,
-			},
-			spanName: "consume",
-			attributes: map[string]string{
-				"messaging.system":           "rabbitmq",
-				"messaging.operation":        "consume",
-				"messaging.destination.name": "user.notifications",
-			},
-			expectedName: "consume user.notifications",
-		},
-		{
-			name: "operation only when no destination",
-			config: MessagingSpanNameRules{
-				UseDestinationTemplate: true,
-			},
-			spanName: "messaging operation",
-			attributes: map[string]string{
-				"messaging.system":    "sqs",
-				"messaging.operation": "send",
-			},
-			expectedName: "send",
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Enabled: true,
-				SpanNameRules: SpanNameRules{
-					Enabled:   true,
-					Messaging: tt.config,
-				},
-			}
-			
-			telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-			processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
-			
-			span := ptrace.NewSpan()
-			span.SetName(tt.spanName)
-			attrs := span.Attributes()
-			
-			for k, v := range tt.attributes {
-				attrs.PutStr(k, v)
-			}
-			
-			processor.enforceSpanName(context.Background(), span)
-			assert.Equal(t, tt.expectedName, span.Name())
-		})
-	}
-}
-
-func TestEnforceSpanName_CustomRules(t *testing.T) {
-	tests := []struct {
-		name         string
-		rules        []SpanNameRule
-		spanName     string
-		attributes   map[string]string
-		expectedName string
-	}{
-		{
-			name: "simple pattern replacement",
-			rules: []SpanNameRule{
-				{
-					Pattern:     `^GET /api/users/\d+/profile$`,
-					Replacement: "GET /api/users/{id}/profile",
-				},
-			},
-			spanName:     "GET /api/users/12345/profile",
-			attributes:   map[string]string{},
-			expectedName: "GET /api/users/{id}/profile",
-		},
-		{
-			name: "pattern with capture groups",
-			rules: []SpanNameRule{
-				{
-					Pattern:     `^/v(\d+)/(.*)$`,
-					Replacement: "/v{version}/$2",
-				},
-			},
-			spanName:     "/v2/users/list",
-			attributes:   map[string]string{},
-			expectedName: "/v{version}/users/list",
-		},
-		{
-			name: "rule with conditions met",
-			rules: []SpanNameRule{
-				{
-					Pattern:     `user\.(\d+)\.notifications`,
-					Replacement: "user.{id}.notifications",
-					Conditions: []Condition{
-						{Attribute: "service.name", Value: "notification-service"},
-					},
-				},
-			},
-			spanName: "user.12345.notifications",
-			attributes: map[string]string{
-				"service.name": "notification-service",
-			},
-			expectedName: "user.{id}.notifications",
-		},
-		{
-			name: "rule with conditions not met",
-			rules: []SpanNameRule{
-				{
-					Pattern:     `user\.(\d+)\.notifications`,
-					Replacement: "user.{id}.notifications",
-					Conditions: []Condition{
-						{Attribute: "service.name", Value: "notification-service"},
-					},
-				},
-			},
-			spanName: "user.12345.notifications",
-			attributes: map[string]string{
-				"service.name": "other-service",
-			},
-			expectedName: "user.12345.notifications", // unchanged
-		},
-		{
-			name: "multiple conditions all must match",
-			rules: []SpanNameRule{
-				{
-					Pattern:     `operation`,
-					Replacement: "normalized_operation",
-					Conditions: []Condition{
-						{Attribute: "env", Value: "prod"},
-						{Attribute: "region", Value: "us-east-1"},
-					},
-				},
-			},
-			spanName: "operation",
-			attributes: map[string]string{
-				"env":    "prod",
-				"region": "us-east-1",
-			},
-			expectedName: "normalized_operation",
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Enabled: true,
-				SpanNameRules: SpanNameRules{
-					Enabled:     true,
-					CustomRules: tt.rules,
-				},
-			}
-			
-			telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-			processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
-			
-			span := ptrace.NewSpan()
-			span.SetName(tt.spanName)
-			attrs := span.Attributes()
-			
-			for k, v := range tt.attributes {
-				attrs.PutStr(k, v)
-			}
-			
-			processor.enforceSpanName(context.Background(), span)
-			assert.Equal(t, tt.expectedName, span.Name())
-		})
-	}
-}
-
-func TestProcessTraces_BenchmarkMetrics(t *testing.T) {
+func TestProcessTraces_Benchmark(t *testing.T) {
 	cfg := &Config{
 		Enabled:   true,
 		Benchmark: true,
-		SpanNameRules: SpanNameRules{
+		SpanProcessing: SpanProcessingConfig{
 			Enabled: true,
-			HTTP: HTTPSpanNameRules{
-				RemovePathParams: true,
+			Mode:    ModeEnforce,
+			Rules: []OTTLRule{
+				{
+					ID:            "http",
+					Priority:      100,
+					Condition:     `attributes["http.method"] != nil`,
+					OperationName: `Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")`,
+				},
 			},
 		},
 	}
+	require.NoError(t, cfg.Validate())
 	
 	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-	processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
 	
-	// Create traces with multiple spans having high-cardinality names
 	traces := ptrace.NewTraces()
 	rs := traces.ResourceSpans().AppendEmpty()
 	ss := rs.ScopeSpans().AppendEmpty()
@@ -450,22 +306,21 @@ func TestProcessTraces_BenchmarkMetrics(t *testing.T) {
 		span.Attributes().PutStr("url.path", "/users/67890/profile")
 	}
 	
-	_, err := processor.processTraces(context.Background(), traces)
+	_, err = processor.processTraces(context.Background(), traces)
 	require.NoError(t, err)
 	
-	// Verify all spans have been normalized to the same name
+	// All spans should be normalized to the same name
 	for i := 0; i < ss.Spans().Len(); i++ {
 		span := ss.Spans().At(i)
 		assert.Equal(t, "GET /users/{id}/profile", span.Name())
 	}
 	
-	// Note: In a real test, we would verify the metrics were recorded
-	// but that requires more complex setup with a metrics exporter
+	// Check benchmark tracking
+	assert.Equal(t, 2, len(processor.spanNameCount))  // 2 unique original names
+	assert.Equal(t, 1, len(processor.operationCount)) // 1 unique operation name
 }
 
-func TestNormalizeHTTPPath(t *testing.T) {
-	processor := &semconvProcessor{}
-	
+func TestNormalizePath_Patterns(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
@@ -490,73 +345,121 @@ func TestNormalizeHTTPPath(t *testing.T) {
 			input:    "/users/123/posts/456/comments/789",
 			expected: "/users/{id}/posts/{id}/comments/{id}",
 		},
+		{
+			input:    "/objects/507f1f77bcf86cd799439011", // MongoDB ObjectId
+			expected: "/objects/{id}",
+		},
+		{
+			input:    "/search?q=test&limit=10",
+			expected: "/search",
+		},
 	}
+	
+	cfg := &Config{
+		Enabled: true,
+		SpanProcessing: SpanProcessingConfig{
+			Enabled: true,
+			Mode:    ModeEnforce,
+			Rules: []OTTLRule{
+				{
+					ID:            "test",
+					Priority:      100,
+					Condition:     `true`,
+					OperationName: `NormalizePath(attributes["path"])`,
+				},
+			},
+		},
+	}
+	require.NoError(t, cfg.Validate())
+	
+	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
 	
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := processor.normalizeHTTPPath(tt.input)
-			assert.Equal(t, tt.expected, result)
+			traces := ptrace.NewTraces()
+			rs := traces.ResourceSpans().AppendEmpty()
+			ss := rs.ScopeSpans().AppendEmpty()
+			span := ss.Spans().AppendEmpty()
+			span.SetName("test")
+			span.Attributes().PutStr("path", tt.input)
+			
+			result, err := processor.processTraces(context.Background(), traces)
+			require.NoError(t, err)
+			
+			resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+			assert.Equal(t, tt.expected, resultSpan.Name())
 		})
 	}
 }
 
-func TestProcessTraces_ComplexScenario(t *testing.T) {
-	cfg := &Config{
-		Enabled: true,
-		SpanNameRules: SpanNameRules{
-			Enabled: true,
-			HTTP: HTTPSpanNameRules{
-				UseURLTemplate:    true,
-				RemoveQueryParams: true,
-				RemovePathParams:  true,
-			},
+func TestParseSQL_Patterns(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "SELECT * FROM users WHERE id = ?",
+			expected: "SELECT users",
+		},
+		{
+			input:    "INSERT INTO products (name, price) VALUES (?, ?)",
+			expected: "INSERT products",
+		},
+		{
+			input:    "UPDATE customers SET email = ? WHERE id = ?",
+			expected: "UPDATE customers",
+		},
+		{
+			input:    "DELETE FROM orders WHERE created_at < ?",
+			expected: "DELETE orders",
+		},
+		{
+			input:    "SELECT u.name FROM `schema`.`users` u JOIN orders o ON u.id = o.user_id",
+			expected: "SELECT users",
+		},
+		{
+			input:    "TRUNCATE TABLE sessions",
+			expected: "TRUNCATE",
 		},
 	}
 	
+	cfg := &Config{
+		Enabled: true,
+		SpanProcessing: SpanProcessingConfig{
+			Enabled: true,
+			Mode:    ModeEnforce,
+			Rules: []OTTLRule{
+				{
+					ID:            "test",
+					Priority:      100,
+					Condition:     `true`,
+					OperationName: `ParseSQL(attributes["sql"])`,
+				},
+			},
+		},
+	}
+	require.NoError(t, cfg.Validate())
+	
 	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-	processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
-	
-	traces := ptrace.NewTraces()
-	rs := traces.ResourceSpans().AppendEmpty()
-	
-	// Add resource attributes
-	rs.Resource().Attributes().PutStr("service.name", "test-service")
-	rs.Resource().Attributes().PutStr("service.version", "1.0.0")
-	
-	ss := rs.ScopeSpans().AppendEmpty()
-	span := ss.Spans().AppendEmpty()
-	span.SetName("GET /users/12345?include=profile&limit=10")
-	
-	// Add span attributes
-	spanAttrs := span.Attributes()
-	spanAttrs.PutStr("http.method", "GET")
-	spanAttrs.PutStr("url.path", "/users/12345?include=profile&limit=10")
-	spanAttrs.PutStr("user.id", "12345")
-	
-	result, err := processor.processTraces(context.Background(), traces)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
 	require.NoError(t, err)
 	
-	// Check resource attributes remain unchanged
-	resourceAttrs := result.ResourceSpans().At(0).Resource().Attributes()
-	val, exists := resourceAttrs.Get("service.name")
-	assert.True(t, exists)
-	assert.Equal(t, "test-service", val.AsString())
-	
-	val, exists = resourceAttrs.Get("service.version")
-	assert.True(t, exists)
-	assert.Equal(t, "1.0.0", val.AsString())
-	
-	// Check span name is normalized
-	resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	assert.Equal(t, "GET /users/{id}", resultSpan.Name())
-	
-	// Check span attributes remain unchanged
-	resultSpanAttrs := resultSpan.Attributes()
-	val, exists = resultSpanAttrs.Get("http.method")
-	assert.True(t, exists)
-	assert.Equal(t, "GET", val.AsString())
-	
-	val, exists = resultSpanAttrs.Get("user.id")
-	assert.True(t, exists)
-	assert.Equal(t, "12345", val.AsString())
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			traces := ptrace.NewTraces()
+			rs := traces.ResourceSpans().AppendEmpty()
+			ss := rs.ScopeSpans().AppendEmpty()
+			span := ss.Spans().AppendEmpty()
+			span.SetName("test")
+			span.Attributes().PutStr("sql", tt.input)
+			
+			result, err := processor.processTraces(context.Background(), traces)
+			require.NoError(t, err)
+			
+			resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+			assert.Equal(t, tt.expected, resultSpan.Name())
+		})
+	}
 }

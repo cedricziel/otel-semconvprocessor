@@ -6,10 +6,11 @@ package semconvprocessor
 import (
 	"context"
 	"fmt"
-	"regexp"
-	"strings"
 	"time"
 
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/contexts/ottlspan"
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -23,45 +24,95 @@ import (
 
 // semconvProcessor is the implementation of the semconv processor
 type semconvProcessor struct {
-	logger      *zap.Logger
-	config      *Config
-	customRules []compiledSpanNameRule
-	telemetry   *metadata.TelemetryBuilder
+	logger         *zap.Logger
+	config         *Config
+	telemetry      *metadata.TelemetryBuilder
+	compiledRules  []compiledRule
+	parser         ottl.Parser[ottlspan.TransformContext]
+	spanNameCount  map[string]int64 // For benchmark mode
+	operationCount map[string]int64 // For benchmark mode
 }
 
-// compiledSpanNameRule is a compiled version of SpanNameRule
-type compiledSpanNameRule struct {
-	pattern     *regexp.Regexp
-	replacement string
-	conditions  []Condition
+// compiledRule represents a compiled OTTL rule
+type compiledRule struct {
+	ID              string
+	Priority        int
+	Condition       ottl.Condition[ottlspan.TransformContext]
+	OperationName   *ottl.ValueExpression[ottlspan.TransformContext]
+	OperationType   *ottl.ValueExpression[ottlspan.TransformContext] // Optional
 }
 
 // newSemconvProcessor creates a new semconv processor
-func newSemconvProcessor(logger *zap.Logger, config *Config, telemetry *metadata.TelemetryBuilder) *semconvProcessor {
+func newSemconvProcessor(logger *zap.Logger, config *Config, telemetry *metadata.TelemetryBuilder, set component.TelemetrySettings) (*semconvProcessor, error) {
 	sp := &semconvProcessor{
 		logger:    logger,
 		config:    config,
 		telemetry: telemetry,
 	}
 	
-	// Compile custom span name rules
-	for _, rule := range config.SpanNameRules.CustomRules {
-		if rule.Pattern != "" {
-			if re, err := regexp.Compile(rule.Pattern); err == nil {
-				sp.customRules = append(sp.customRules, compiledSpanNameRule{
-					pattern:     re,
-					replacement: rule.Replacement,
-					conditions:  rule.Conditions,
-				})
-			} else {
-				logger.Error("failed to compile span name rule pattern",
-					zap.String("pattern", rule.Pattern),
-					zap.Error(err))
-			}
+	if config.Benchmark {
+		sp.spanNameCount = make(map[string]int64)
+		sp.operationCount = make(map[string]int64)
+	}
+	
+	// Initialize OTTL parser if span processing is enabled
+	if config.SpanProcessing.Enabled {
+		// Create parser with custom functions and telemetry settings
+		parser, err := ottlspan.NewParser(
+			ottlFunctions[ottlspan.TransformContext](),
+			set,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OTTL parser: %w", err)
+		}
+		sp.parser = parser
+		
+		// Compile rules
+		if err := sp.compileRules(); err != nil {
+			return nil, fmt.Errorf("failed to compile rules: %w", err)
 		}
 	}
 	
-	return sp
+	return sp, nil
+}
+
+// compileRules compiles OTTL expressions from configuration
+func (sp *semconvProcessor) compileRules() error {
+	sp.compiledRules = make([]compiledRule, 0, len(sp.config.SpanProcessing.Rules))
+	
+	for _, rule := range sp.config.SpanProcessing.Rules {
+		compiled := compiledRule{
+			ID:       rule.ID,
+			Priority: rule.Priority,
+		}
+		
+		// Compile condition
+		condition, err := sp.parser.ParseCondition(rule.Condition)
+		if err != nil {
+			return fmt.Errorf("failed to parse condition for rule %s: %w", rule.ID, err)
+		}
+		compiled.Condition = *condition
+		
+		// Parse operation name as a value expression
+		operationName, err := sp.parser.ParseValueExpression(rule.OperationName)
+		if err != nil {
+			return fmt.Errorf("failed to parse operation_name for rule %s: %w", rule.ID, err)
+		}
+		compiled.OperationName = operationName
+		
+		// Parse operation type as a value expression (optional)
+		if rule.OperationType != "" {
+			operationType, err := sp.parser.ParseValueExpression(rule.OperationType)
+			if err != nil {
+				return fmt.Errorf("failed to parse operation_type for rule %s: %w", rule.ID, err)
+			}
+			compiled.OperationType = operationType
+		}
+		
+		sp.compiledRules = append(sp.compiledRules, compiled)
+	}
+	
+	return nil
 }
 
 // processTraces processes the incoming traces
@@ -73,22 +124,25 @@ func (sp *semconvProcessor) processTraces(ctx context.Context, td ptrace.Traces)
 	start := time.Now()
 	spanCount := 0
 
-	// Process traces here
-	// This is where you would implement semantic convention processing for traces
+	// Process traces
 	resourceSpans := td.ResourceSpans()
 	for i := 0; i < resourceSpans.Len(); i++ {
 		rs := resourceSpans.At(i)
+		resource := rs.Resource()
 		
 		scopeSpans := rs.ScopeSpans()
 		for j := 0; j < scopeSpans.Len(); j++ {
 			ss := scopeSpans.At(j)
+			scope := ss.Scope()
 			spans := ss.Spans()
+			
 			for k := 0; k < spans.Len(); k++ {
 				span := spans.At(k)
 				spanCount++
-				// Enforce span name conventions
-				if sp.config.SpanNameRules.Enabled {
-					sp.enforceSpanName(ctx, span)
+				
+				// Process span if rules are enabled
+				if sp.config.SpanProcessing.Enabled {
+					sp.processSpan(ctx, span, resource, scope)
 				}
 			}
 		}
@@ -99,11 +153,105 @@ func (sp *semconvProcessor) processTraces(ctx context.Context, td ptrace.Traces)
 		sp.telemetry.ProcessorSemconvSpansProcessed.Add(ctx, int64(spanCount), 
 			metric.WithAttributes(attribute.String("signal_type", "traces")))
 	}
+	
+	// Record benchmark metrics if enabled
+	if sp.config.Benchmark {
+		sp.recordBenchmarkMetrics(ctx)
+	}
+	
 	duration := float64(time.Since(start).Microseconds()) / 1000.0 // Convert to milliseconds
 	sp.telemetry.ProcessorSemconvProcessingDuration.Record(ctx, duration,
 		metric.WithAttributes(attribute.String("signal_type", "traces")))
 
 	return td, nil
+}
+
+// processSpan processes a single span according to configured rules
+func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, resource pcommon.Resource, scope pcommon.InstrumentationScope) {
+	// Track original span name for benchmark mode
+	if sp.config.Benchmark {
+		sp.spanNameCount[span.Name()]++
+	}
+	
+	// Create OTTL transform context - using dummy values for missing parameters
+	dummyScopeSpans := ptrace.NewScopeSpans()
+	dummyResourceSpans := ptrace.NewResourceSpans()
+	tCtx := ottlspan.NewTransformContext(span, scope, resource, dummyScopeSpans, dummyResourceSpans)
+	
+	// Evaluate rules in priority order
+	for _, rule := range sp.compiledRules {
+		// Check condition
+		matches, err := rule.Condition.Eval(ctx, tCtx)
+		if err != nil {
+			sp.logger.Debug("rule condition evaluation error",
+				zap.String("rule_id", rule.ID),
+				zap.Error(err))
+			continue
+		}
+		
+		if !matches {
+			continue
+		}
+		
+		// Rule matched - generate operation name
+		operationNameVal, err := rule.OperationName.Eval(ctx, tCtx)
+		if err != nil {
+			sp.logger.Debug("operation name generation error",
+				zap.String("rule_id", rule.ID),
+				zap.Error(err))
+			continue
+		}
+		
+		// Convert to string
+		operationName := fmt.Sprintf("%v", operationNameVal)
+		
+		// Generate operation type if defined
+		var operationType string
+		if rule.OperationType != nil {
+			operationTypeVal, err := rule.OperationType.Eval(ctx, tCtx)
+			if err == nil {
+				operationType = fmt.Sprintf("%v", operationTypeVal)
+			}
+		}
+		
+		// Apply based on mode
+		switch sp.config.SpanProcessing.Mode {
+		case ModeEnrich:
+			// Only add attributes
+			span.Attributes().PutStr(sp.config.SpanProcessing.OperationNameAttribute, operationName)
+			if operationType != "" {
+				span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
+			}
+			
+		case ModeEnforce:
+			// Override span name
+			originalName := span.Name()
+			if sp.config.SpanProcessing.PreserveOriginalName && originalName != operationName {
+				span.Attributes().PutStr(sp.config.SpanProcessing.OriginalNameAttribute, originalName)
+			}
+			span.SetName(operationName)
+			
+			// Still add operation type as attribute
+			if operationType != "" {
+				span.Attributes().PutStr(sp.config.SpanProcessing.OperationTypeAttribute, operationType)
+			}
+		}
+		
+		// Track operation name for benchmark mode
+		if sp.config.Benchmark {
+			sp.operationCount[operationName]++
+		}
+		
+		// Record metrics
+		sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
+			metric.WithAttributes(
+				attribute.String("rule_id", rule.ID),
+				attribute.String("operation_type", operationType),
+			))
+		
+		// First match wins - stop processing
+		break
+	}
 }
 
 // processMetrics processes the incoming metrics
@@ -114,8 +262,6 @@ func (sp *semconvProcessor) processMetrics(ctx context.Context, md pmetric.Metri
 
 	start := time.Now()
 
-	// Process metrics here
-	// This is where you would implement semantic convention processing for metrics
 	// Process metrics here
 	// This is where you would implement semantic convention processing for metrics
 	// Currently, this processor focuses on span name enforcement for traces
@@ -159,241 +305,19 @@ func (sp *semconvProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog
 	return ld, nil
 }
 
-// enforceSpanName applies semantic convention rules to span names
-func (sp *semconvProcessor) enforceSpanName(ctx context.Context, span ptrace.Span) {
-	attrs := span.Attributes()
-	originalName := span.Name()
-	newName := originalName
+// recordBenchmarkMetrics records cardinality reduction metrics when benchmark mode is enabled
+func (sp *semconvProcessor) recordBenchmarkMetrics(ctx context.Context) {
+	originalCount := int64(len(sp.spanNameCount))
+	reducedCount := int64(len(sp.operationCount))
 	
-	// Check span kind and attributes to determine the type
-	spanKind := span.Kind()
+	sp.telemetry.ProcessorSemconvOriginalSpanNameCount.Record(ctx, originalCount)
+	sp.telemetry.ProcessorSemconvReducedSpanNameCount.Record(ctx, reducedCount)
 	
-	// HTTP span name enforcement
-	if sp.shouldApplyHTTPRules(attrs, spanKind) {
-		newName = sp.enforceHTTPSpanName(span, attrs)
-		if newName != originalName {
-			sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
-				metric.WithAttributes(attribute.String("convention_type", "http")))
-		}
+	if originalCount > 0 {
+		reduction := float64(originalCount-reducedCount) / float64(originalCount) * 100
+		sp.logger.Info("cardinality reduction achieved",
+			zap.Int64("original_span_names", originalCount),
+			zap.Int64("operation_names", reducedCount),
+			zap.Float64("reduction_percentage", reduction))
 	}
-	
-	// Database span name enforcement
-	if sp.shouldApplyDatabaseRules(attrs, spanKind) {
-		newName = sp.enforceDatabaseSpanName(span, attrs)
-		if newName != originalName {
-			sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
-				metric.WithAttributes(attribute.String("convention_type", "database")))
-		}
-	}
-	
-	// Messaging span name enforcement
-	if sp.shouldApplyMessagingRules(attrs, spanKind) {
-		newName = sp.enforceMessagingSpanName(span, attrs)
-		if newName != originalName {
-			sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
-				metric.WithAttributes(attribute.String("convention_type", "messaging")))
-		}
-	}
-	
-	// Apply custom rules
-	for _, rule := range sp.customRules {
-		if sp.matchesConditions(attrs, rule.conditions) {
-			if rule.pattern.MatchString(newName) {
-				old := newName
-				newName = rule.pattern.ReplaceAllString(newName, rule.replacement)
-				if old != newName {
-					sp.telemetry.ProcessorSemconvSpanNamesEnforced.Add(ctx, 1,
-						metric.WithAttributes(attribute.String("convention_type", "custom")))
-				}
-			}
-		}
-	}
-	
-	// Update span name if changed
-	if newName != originalName {
-		span.SetName(newName)
-		sp.logger.Debug("enforced span name convention",
-			zap.String("original", originalName),
-			zap.String("new", newName))
-	}
-}
-
-// shouldApplyHTTPRules checks if HTTP rules should be applied
-func (sp *semconvProcessor) shouldApplyHTTPRules(attrs pcommon.Map, kind ptrace.SpanKind) bool {
-	if !sp.config.SpanNameRules.HTTP.UseURLTemplate && 
-	   !sp.config.SpanNameRules.HTTP.RemoveQueryParams && 
-	   !sp.config.SpanNameRules.HTTP.RemovePathParams {
-		return false
-	}
-	
-	// Check for HTTP attributes
-	if _, ok := attrs.Get("http.method"); ok {
-		return true
-	}
-	if _, ok := attrs.Get("http.request.method"); ok {
-		return true
-	}
-	return false
-}
-
-// enforceHTTPSpanName enforces HTTP span naming conventions
-func (sp *semconvProcessor) enforceHTTPSpanName(span ptrace.Span, attrs pcommon.Map) string {
-	var method, target string
-	
-	// Get HTTP method
-	if val, ok := attrs.Get("http.request.method"); ok {
-		method = val.AsString()
-	} else if val, ok := attrs.Get("http.method"); ok {
-		method = val.AsString()
-	}
-	
-	// Use URL template if available and enabled
-	if sp.config.SpanNameRules.HTTP.UseURLTemplate {
-		if val, ok := attrs.Get("url.template"); ok {
-			target = val.AsString()
-		} else if val, ok := attrs.Get("http.route"); ok {
-			target = val.AsString()
-		}
-	}
-	
-	// If no template, try to extract from URL/path
-	if target == "" {
-		if val, ok := attrs.Get("url.path"); ok {
-			target = val.AsString()
-		} else if val, ok := attrs.Get("http.target"); ok {
-			target = val.AsString()
-		}
-		
-		// Remove query parameters if configured
-		if sp.config.SpanNameRules.HTTP.RemoveQueryParams && target != "" {
-			if idx := strings.Index(target, "?"); idx != -1 {
-				target = target[:idx]
-			}
-		}
-		
-		// Replace path parameters with placeholders if configured
-		if sp.config.SpanNameRules.HTTP.RemovePathParams && target != "" {
-			target = sp.normalizeHTTPPath(target)
-		}
-	}
-	
-	// Format span name according to convention
-	if method != "" && target != "" {
-		return fmt.Sprintf("%s %s", method, target)
-	} else if method != "" {
-		return method
-	}
-	
-	return span.Name()
-}
-
-// normalizeHTTPPath replaces common path parameters with placeholders
-func (sp *semconvProcessor) normalizeHTTPPath(path string) string {
-	// Replace UUIDs
-	uuidRe := regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-	path = uuidRe.ReplaceAllString(path, "{id}")
-	
-	// Replace numeric IDs
-	numericRe := regexp.MustCompile(`/\d+(/|$)`)
-	path = numericRe.ReplaceAllString(path, "/{id}$1")
-	
-	return path
-}
-
-// shouldApplyDatabaseRules checks if database rules should be applied
-func (sp *semconvProcessor) shouldApplyDatabaseRules(attrs pcommon.Map, kind ptrace.SpanKind) bool {
-	if !sp.config.SpanNameRules.Database.UseQuerySummary && 
-	   !sp.config.SpanNameRules.Database.UseOperationName {
-		return false
-	}
-	
-	// Check for database attributes
-	if _, ok := attrs.Get("db.system"); ok {
-		return true
-	}
-	return false
-}
-
-// enforceDatabaseSpanName enforces database span naming conventions
-func (sp *semconvProcessor) enforceDatabaseSpanName(span ptrace.Span, attrs pcommon.Map) string {
-	// Use query summary if available and enabled
-	if sp.config.SpanNameRules.Database.UseQuerySummary {
-		if val, ok := attrs.Get("db.query.summary"); ok {
-			return val.AsString()
-		}
-	}
-	
-	// Use operation name if available and enabled
-	if sp.config.SpanNameRules.Database.UseOperationName {
-		if val, ok := attrs.Get("db.operation.name"); ok {
-			return val.AsString()
-		}
-	}
-	
-	// Fall back to db.name or db.system
-	if val, ok := attrs.Get("db.name"); ok {
-		return val.AsString()
-	}
-	if val, ok := attrs.Get("db.system"); ok {
-		return val.AsString()
-	}
-	
-	return span.Name()
-}
-
-// shouldApplyMessagingRules checks if messaging rules should be applied
-func (sp *semconvProcessor) shouldApplyMessagingRules(attrs pcommon.Map, kind ptrace.SpanKind) bool {
-	if !sp.config.SpanNameRules.Messaging.UseDestinationTemplate {
-		return false
-	}
-	
-	// Check for messaging attributes
-	if _, ok := attrs.Get("messaging.system"); ok {
-		return true
-	}
-	return false
-}
-
-// enforceMessagingSpanName enforces messaging span naming conventions
-func (sp *semconvProcessor) enforceMessagingSpanName(span ptrace.Span, attrs pcommon.Map) string {
-	var operation, destination string
-	
-	// Get operation
-	if val, ok := attrs.Get("messaging.operation.type"); ok {
-		operation = val.AsString()
-	} else if val, ok := attrs.Get("messaging.operation"); ok {
-		operation = val.AsString()
-	}
-	
-	// Use destination template if available and enabled
-	if sp.config.SpanNameRules.Messaging.UseDestinationTemplate {
-		if val, ok := attrs.Get("messaging.destination.template"); ok {
-			destination = val.AsString()
-		} else if val, ok := attrs.Get("messaging.destination.name"); ok {
-			destination = val.AsString()
-		}
-	}
-	
-	// Format span name according to convention
-	if operation != "" && destination != "" {
-		return fmt.Sprintf("%s %s", operation, destination)
-	} else if operation != "" {
-		return operation
-	}
-	
-	return span.Name()
-}
-
-// matchesConditions checks if all conditions are met
-func (sp *semconvProcessor) matchesConditions(attrs pcommon.Map, conditions []Condition) bool {
-	for _, cond := range conditions {
-		if val, ok := attrs.Get(cond.Attribute); ok {
-			if val.AsString() != cond.Value {
-				return false
-			}
-		} else {
-			return false
-		}
-	}
-	return true
 }

@@ -1,6 +1,6 @@
 # OpenTelemetry Collector - Semantic Convention Processor
 
-A custom OpenTelemetry Collector processor that enforces semantic conventions to reduce cardinality in telemetry data, particularly for span names.
+A custom OpenTelemetry Collector processor that enforces semantic conventions to reduce cardinality in telemetry data using OTTL (OpenTelemetry Transformation Language) for powerful and flexible span name processing.
 
 ## Project Structure
 
@@ -36,26 +36,39 @@ Run the collector with a configuration file:
 
 ## Configuration
 
-The semconv processor enforces semantic conventions to maintain low cardinality in telemetry data by normalizing span names according to OpenTelemetry semantic conventions.
+The semconv processor uses OTTL-based rules to reduce cardinality by generating normalized operation names while preserving detailed information in attributes.
 
-### Processor Configuration
+### Key Features
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enables or disables the processor |
-| `benchmark` | bool | `false` | Enable cardinality reduction metrics |
+- **OTTL-powered rule engine** for maximum flexibility
+- **Dual processing modes**: `enrich` (adds attributes) or `enforce` (replaces span names)
+- **Rule prioritization** with first-match-wins behavior
+- **Custom OTTL functions** for common patterns
+- **Cardinality tracking metrics**
 
-### Span Name Rules Configuration
+### Basic Configuration
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `span_name_rules.enabled` | bool | Enables span name enforcement |
-| `span_name_rules.http` | object | HTTP-specific span naming rules |
-| `span_name_rules.database` | object | Database-specific span naming rules |
-| `span_name_rules.messaging` | object | Messaging-specific span naming rules |
-| `span_name_rules.custom_rules` | []rule | Custom regex-based transformation rules |
+```yaml
+processors:
+  semconv:
+    enabled: true
+    benchmark: true  # Enable cardinality tracking
+    span_processing:
+      enabled: true
+      mode: "enforce"  # "enrich" or "enforce"
+      operation_name_attribute: "operation.name"
+      operation_type_attribute: "operation.type" 
+      preserve_original_name: true
+      original_name_attribute: "span.name.original"
+      rules:
+        - id: "http_routes"
+          priority: 100
+          condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
+          operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+          operation_type: '"http"'
+```
 
-### Example Configuration
+### Complete Example Configuration
 
 ```yaml
 receivers:
@@ -67,36 +80,39 @@ receivers:
 processors:
   semconv:
     enabled: true
-    benchmark: true  # Enable cardinality metrics
-    
-    # Span name enforcement rules to reduce cardinality
-    span_name_rules:
+    benchmark: true
+    span_processing:
       enabled: true
-      
-      # HTTP span name rules
-      http:
-        use_url_template: true      # Use url.template or http.route if available
-        remove_query_params: true   # Strip query parameters from URLs
-        remove_path_params: true    # Replace dynamic path segments with placeholders
-      
-      # Database span name rules  
-      database:
-        use_query_summary: true     # Use db.query.summary for span names
-        use_operation_name: true    # Use db.operation.name as fallback
-      
-      # Messaging span name rules
-      messaging:
-        use_destination_template: true  # Use messaging.destination.template
-      
-      # Custom transformation rules
-      custom_rules:
-        - pattern: "^GET /api/users/[0-9]+/profile$"
-          replacement: "GET /api/users/{id}/profile"
-        - pattern: "^/v[0-9]+/(.*)$"
-          replacement: "/v{version}/$1"
-          conditions:
-            - attribute: "service.name"
-              value: "api-gateway"
+      mode: "enforce"
+      preserve_original_name: true
+      rules:
+        # HTTP route normalization (highest priority)
+        - id: "http_routes"
+          priority: 100
+          condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
+          operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+          operation_type: '"http"'
+        
+        # HTTP path normalization (fallback)
+        - id: "http_paths"
+          priority: 200
+          condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
+          operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
+          operation_type: '"http"'
+        
+        # Database query processing
+        - id: "database_queries"
+          priority: 300
+          condition: 'attributes["db.statement"] != nil'
+          operation_name: 'ParseSQL(attributes["db.statement"])'
+          operation_type: 'attributes["db.system"]'
+        
+        # Messaging operations
+        - id: "messaging"
+          priority: 400
+          condition: 'attributes["messaging.operation"] != nil'
+          operation_name: 'Concat([attributes["messaging.operation"], attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
 
 exporters:
   debug:
@@ -108,26 +124,88 @@ service:
       receivers: [otlp]
       processors: [semconv]
       exporters: [debug]
-    metrics:
-      receivers: [otlp]
-      processors: [semconv]
-      exporters: [debug]
-    logs:
-      receivers: [otlp]
-      processors: [semconv]
-      exporters: [debug]
 ```
+
+### Processing Modes
+
+- **`enrich`**: Adds operation name and type as span attributes, keeps original span names unchanged
+- **`enforce`**: Replaces span names with operation names for maximum cardinality reduction
+
+### Custom OTTL Functions
+
+The processor provides specialized OTTL functions for common cardinality reduction patterns:
+
+#### NormalizePath(path)
+Normalizes URL paths by replacing identifiers with `{id}` placeholders:
+- `/users/12345/profile` → `/users/{id}/profile`
+- `/api/orders/550e8400-e29b-41d4-a716-446655440000` → `/api/orders/{id}`
+
+#### ParseSQL(statement)
+Extracts operation and primary table from SQL statements:
+- `SELECT * FROM users WHERE id = ?` → `SELECT users`
+- `INSERT INTO products (name, price) VALUES (?, ?)` → `INSERT products`
+
+#### RemoveQueryParams(url)
+Removes query parameters from URLs:
+- `/search?q=test&limit=10` → `/search`
 
 ### Cardinality Reduction Examples
 
-The processor transforms high-cardinality span names into low-cardinality equivalents:
+| Original Span Name | OTTL Rule | Result |
+|--------------------|-----------|---------|
+| `GET /users/12345/profile` | `NormalizePath(attributes["url.path"])` | `GET /users/{id}/profile` |
+| `POST /api/v1/orders/550e8400-e29b-41d4-a716-446655440000` | Custom normalization | `POST /api/v1/orders/{id}` |
+| `SELECT * FROM users WHERE id = 12345` | `ParseSQL(attributes["db.statement"])` | `SELECT users` |
+| `publish user.created` | Messaging rule | `publish user.created` |
 
-| Original Span Name | Transformed Span Name | Rule Applied |
-|--------------------|----------------------|---------------|
-| `GET /users/12345/profile` | `GET /users/{id}/profile` | HTTP path parameter normalization |
-| `GET /search?q=opentelemetry&limit=10` | `GET /search` | Query parameter removal |
-| `SELECT * FROM users WHERE id = 12345` | `SELECT users` | Database query summary |
-| `publish user.12345.notifications` | `publish user.{id}.notifications` | Custom rule |
+## OTTL Rule Examples
+
+### HTTP Normalizations
+```yaml
+# Route-based (preferred)
+condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
+operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+
+# Path-based (fallback)  
+condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
+operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
+
+# Query parameter removal
+condition: 'attributes["http.target"] != nil'
+operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.target"])], " ")'
+```
+
+### Database Operations
+```yaml
+# SQL parsing
+condition: 'attributes["db.statement"] != nil'
+operation_name: 'ParseSQL(attributes["db.statement"])'
+
+# Simple operation naming
+condition: 'attributes["db.operation"] != nil and attributes["db.collection.name"] != nil'
+operation_name: 'Concat([attributes["db.operation"], attributes["db.collection.name"]], " ")'
+```
+
+### Custom Business Logic
+```yaml
+# Service-specific rules
+condition: 'attributes["service.name"] == "user-service" and span.kind == SPAN_KIND_SERVER'
+operation_name: 'Concat([attributes["service.name"], attributes["rpc.method"]], "::")'
+
+# Conditional processing
+condition: 'attributes["component"] == "auth" and attributes["operation"] != nil'
+operation_name: 'Concat(["auth", attributes["operation"]], ".")'
+```
+
+## Telemetry Metrics
+
+Monitor processor effectiveness with built-in metrics:
+
+- `otelcol_processor_semconv_spans_processed` - Total spans processed
+- `otelcol_processor_semconv_span_names_enforced` - Span names changed (with `rule_id`)
+- `otelcol_processor_semconv_processing_duration` - Processing latency
+- `otelcol_processor_semconv_original_span_name_count` - Original cardinality (benchmark mode)
+- `otelcol_processor_semconv_reduced_span_name_count` - Reduced cardinality (benchmark mode)
 
 ## Development
 
@@ -147,6 +225,18 @@ cd processors/semconvprocessor
 go get -u ./...
 go mod tidy
 ```
+
+### Running Tests with Custom Functions
+
+The processor includes comprehensive tests for all OTTL functionality:
+```bash
+cd processors/semconvprocessor
+go test -v ./... -run TestProcessTraces_CustomFunctions
+```
+
+## Migration from Previous Version
+
+**Breaking Change**: The previous attribute mapping functionality has been removed. The new OTTL-based approach provides significantly more flexibility and power. Migrate existing configurations to use OTTL rules instead of the old mapping syntax.
 
 ## License
 

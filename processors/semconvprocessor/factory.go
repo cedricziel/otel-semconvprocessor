@@ -48,7 +48,10 @@ func createTracesProcessor(
 	if err != nil {
 		return nil, err
 	}
-	sp := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder)
+	sp, err := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder, set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
 	return processorhelper.NewTraces(
 		ctx,
 		set,
@@ -74,7 +77,10 @@ func createMetricsProcessor(
 	if err != nil {
 		return nil, err
 	}
-	sp := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder)
+	sp, err := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder, set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
 	return processorhelper.NewMetrics(
 		ctx,
 		set,
@@ -100,7 +106,10 @@ func createLogsProcessor(
 	if err != nil {
 		return nil, err
 	}
-	sp := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder)
+	sp, err := newSemconvProcessor(set.Logger, cfg.(*Config), telemetryBuilder, set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
 	return processorhelper.NewLogs(
 		ctx,
 		set,

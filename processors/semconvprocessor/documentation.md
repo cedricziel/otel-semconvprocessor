@@ -62,7 +62,8 @@ Number of span names changed to match semantic conventions
 
 | Name | Description | Values |
 | ---- | ----------- | ------ |
-| convention_type | The type of semantic convention being enforced | Str: ``http``, ``database``, ``messaging``, ``custom`` |
+| rule_id | The ID of the rule that matched | Any Str |
+| operation_type | The type of operation extracted from the span | Any Str |
 
 ### otelcol_processor_semconv_spans_processed
 
