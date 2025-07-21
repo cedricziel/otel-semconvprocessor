@@ -57,7 +57,8 @@ func createTracesProcessor(
 		sp.processTraces,
 		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: true}),
 		processorhelper.WithShutdown(func(context.Context) error {
-			return telemetryBuilder.Shutdown(ctx)
+			telemetryBuilder.Shutdown()
+			return nil
 		}),
 	)
 }
@@ -82,7 +83,8 @@ func createMetricsProcessor(
 		sp.processMetrics,
 		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: true}),
 		processorhelper.WithShutdown(func(context.Context) error {
-			return telemetryBuilder.Shutdown(ctx)
+			telemetryBuilder.Shutdown()
+			return nil
 		}),
 	)
 }
@@ -107,7 +109,8 @@ func createLogsProcessor(
 		sp.processLogs,
 		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: true}),
 		processorhelper.WithShutdown(func(context.Context) error {
-			return telemetryBuilder.Shutdown(ctx)
+			telemetryBuilder.Shutdown()
+			return nil
 		}),
 	)
 }

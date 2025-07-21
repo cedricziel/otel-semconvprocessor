@@ -40,8 +40,7 @@ cd processors/semconvprocessor && go build .
 
 ### Key Design Patterns
 
-1. **Dual Purpose**: The processor serves two main functions:
-   - **Attribute Mappings**: Migrates attributes to newer semantic conventions
+1. **Primary Purpose**: The processor focuses on enforcing semantic conventions to reduce cardinality:
    - **Span Name Enforcement**: Normalizes span names to maintain low cardinality
 
 2. **Span Name Normalization**:

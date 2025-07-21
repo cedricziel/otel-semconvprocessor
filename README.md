@@ -36,28 +36,14 @@ Run the collector with a configuration file:
 
 ## Configuration
 
-The semconv processor enforces semantic conventions and transforms telemetry data to maintain low cardinality. It supports both attribute mappings and span name normalization.
+The semconv processor enforces semantic conventions to maintain low cardinality in telemetry data by normalizing span names according to OpenTelemetry semantic conventions.
 
 ### Processor Configuration
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enables or disables the processor |
-| `mappings` | []mapping | `[]` | List of attribute transformations |
-
-### Mapping Configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `from` | string | Source attribute name |
-| `to` | string | Target attribute name |
-| `action` | string | Transformation action: `rename`, `copy`, or `move` |
-
-### Actions
-
-- **rename**: Renames the attribute and removes the original
-- **copy**: Copies the attribute value to a new name while preserving the original
-- **move**: Alias for rename
+| `benchmark` | bool | `false` | Enable cardinality reduction metrics |
 
 ### Span Name Rules Configuration
 
@@ -81,14 +67,7 @@ receivers:
 processors:
   semconv:
     enabled: true
-    # Attribute mappings for semantic convention migration
-    mappings:
-      - from: "http.method"
-        to: "http.request.method"
-        action: "rename"
-      - from: "http.status_code"
-        to: "http.response.status_code"
-        action: "rename"
+    benchmark: true  # Enable cardinality metrics
     
     # Span name enforcement rules to reduce cardinality
     span_name_rules:

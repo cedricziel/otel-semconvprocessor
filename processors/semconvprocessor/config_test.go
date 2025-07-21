@@ -18,16 +18,6 @@ func TestConfig_Validate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid config with mappings",
-			config: &Config{
-				Enabled: true,
-				Mappings: []AttributeMapping{
-					{From: "old", To: "new", Action: "rename"},
-				},
-			},
-			wantErr: false,
-		},
-		{
 			name: "valid config with span name rules",
 			config: &Config{
 				Enabled: true,
@@ -97,81 +87,6 @@ func TestConfig_Implements(t *testing.T) {
 	cfg := &Config{}
 	// Verify that Config implements component.Config interface
 	var _ component.Config = cfg
-}
-
-func TestAttributeMapping_Validation(t *testing.T) {
-	tests := []struct {
-		name    string
-		mapping AttributeMapping
-		valid   bool
-	}{
-		{
-			name: "valid rename",
-			mapping: AttributeMapping{
-				From:   "old.attribute",
-				To:     "new.attribute",
-				Action: "rename",
-			},
-			valid: true,
-		},
-		{
-			name: "valid copy",
-			mapping: AttributeMapping{
-				From:   "source",
-				To:     "destination",
-				Action: "copy",
-			},
-			valid: true,
-		},
-		{
-			name: "valid move",
-			mapping: AttributeMapping{
-				From:   "from.attr",
-				To:     "to.attr",
-				Action: "move",
-			},
-			valid: true,
-		},
-		{
-			name: "empty from field",
-			mapping: AttributeMapping{
-				From:   "",
-				To:     "new.attribute",
-				Action: "rename",
-			},
-			valid: false,
-		},
-		{
-			name: "empty to field",
-			mapping: AttributeMapping{
-				From:   "old.attribute",
-				To:     "",
-				Action: "rename",
-			},
-			valid: false,
-		},
-		{
-			name: "invalid action",
-			mapping: AttributeMapping{
-				From:   "old",
-				To:     "new",
-				Action: "invalid",
-			},
-			valid: false,
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Note: In a real implementation, you might want to add
-			// validation logic to AttributeMapping
-			// For now, we're just documenting expected behavior
-			if !tt.valid {
-				// These cases should be caught during validation
-				// when the feature is implemented
-			}
-		})
-	}
 }
 
 func TestSpanNameRule_Validation(t *testing.T) {

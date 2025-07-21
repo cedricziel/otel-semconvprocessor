@@ -29,7 +29,6 @@ func TestCreateDefaultConfig(t *testing.T) {
 	require.True(t, ok)
 	assert.False(t, defaultCfg.Enabled)
 	assert.False(t, defaultCfg.Benchmark)
-	assert.Empty(t, defaultCfg.Mappings)
 }
 
 func TestCreateTracesProcessor(t *testing.T) {

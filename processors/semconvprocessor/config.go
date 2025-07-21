@@ -15,23 +15,8 @@ type Config struct {
 	// Benchmark enables cardinality metrics tracking
 	Benchmark bool `mapstructure:"benchmark"`
 	
-	// Mappings defines attribute mappings for semantic convention processing
-	Mappings []AttributeMapping `mapstructure:"mappings"`
-	
 	// SpanNameRules defines rules for enforcing span name conventions
 	SpanNameRules SpanNameRules `mapstructure:"span_name_rules"`
-}
-
-// AttributeMapping defines a mapping from one attribute to another
-type AttributeMapping struct {
-	// From is the source attribute name
-	From string `mapstructure:"from"`
-	
-	// To is the target attribute name
-	To string `mapstructure:"to"`
-	
-	// Action defines what to do with the mapping (e.g., "rename", "copy", "move")
-	Action string `mapstructure:"action"`
 }
 
 // SpanNameRules defines rules for enforcing low-cardinality span names

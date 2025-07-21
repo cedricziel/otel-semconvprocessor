@@ -5,32 +5,22 @@ status:
   stability:
     development: [metrics, traces, logs]
 
+attributes:
+  signal_type:
+    description: The type of signal being processed
+    type: string
+    enum: [traces, metrics, logs]
+  convention_type:
+    description: The type of semantic convention being enforced
+    type: string
+    enum: [http, database, messaging, custom]
+  error_type:
+    description: The type of error encountered
+    type: string
+    enum: [validation, processing]
+
 telemetry:
   metrics:
-    processor_semconv_attributes_renamed:
-      enabled: true
-      description: Number of attributes renamed by the processor
-      unit: "{operations}"
-      sum:
-        value_type: int
-        monotonic: true
-
-    processor_semconv_attributes_copied:
-      enabled: true
-      description: Number of attributes copied by the processor
-      unit: "{operations}"
-      sum:
-        value_type: int
-        monotonic: true
-
-    processor_semconv_attributes_moved:
-      enabled: true
-      description: Number of attributes moved by the processor
-      unit: "{operations}"
-      sum:
-        value_type: int
-        monotonic: true
-
     processor_semconv_spans_processed:
       enabled: true
       description: Number of spans processed by the processor
@@ -70,3 +60,17 @@ telemetry:
         monotonic: true
       attributes:
         - error_type
+
+    processor_semconv_original_span_name_count:
+      enabled: true
+      description: Number of unique span names before enforcement
+      unit: "{names}"
+      gauge:
+        value_type: int
+
+    processor_semconv_reduced_span_name_count:
+      enabled: true
+      description: Number of unique span names after enforcement
+      unit: "{names}"
+      gauge:
+        value_type: int

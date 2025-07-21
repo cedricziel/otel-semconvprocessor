@@ -32,72 +32,6 @@ func TestProcessTraces_Disabled(t *testing.T) {
 	assert.Equal(t, traces, result)
 }
 
-func TestProcessTraces_AttributeMappings(t *testing.T) {
-	tests := []struct {
-		name     string
-		mappings []AttributeMapping
-		input    map[string]string
-		expected map[string]string
-	}{
-		{
-			name: "rename attribute",
-			mappings: []AttributeMapping{
-				{From: "http.method", To: "http.request.method", Action: "rename"},
-			},
-			input:    map[string]string{"http.method": "GET"},
-			expected: map[string]string{"http.request.method": "GET"},
-		},
-		{
-			name: "copy attribute",
-			mappings: []AttributeMapping{
-				{From: "service.version", To: "service.version.string", Action: "copy"},
-			},
-			input:    map[string]string{"service.version": "1.0.0"},
-			expected: map[string]string{"service.version": "1.0.0", "service.version.string": "1.0.0"},
-		},
-		{
-			name: "move attribute",
-			mappings: []AttributeMapping{
-				{From: "old.name", To: "new.name", Action: "move"},
-			},
-			input:    map[string]string{"old.name": "value"},
-			expected: map[string]string{"new.name": "value"},
-		},
-	}
-	
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				Enabled:  true,
-				Mappings: tt.mappings,
-			}
-			
-			telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
-			processor := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder)
-			
-			traces := ptrace.NewTraces()
-			rs := traces.ResourceSpans().AppendEmpty()
-			attrs := rs.Resource().Attributes()
-			
-			for k, v := range tt.input {
-				attrs.PutStr(k, v)
-			}
-			
-			result, err := processor.processTraces(context.Background(), traces)
-			require.NoError(t, err)
-			
-			resultAttrs := result.ResourceSpans().At(0).Resource().Attributes()
-			assert.Equal(t, len(tt.expected), resultAttrs.Len())
-			
-			for k, v := range tt.expected {
-				val, exists := resultAttrs.Get(k)
-				assert.True(t, exists, "expected attribute %s not found", k)
-				assert.Equal(t, v, val.AsString())
-			}
-		})
-	}
-}
-
 func TestEnforceSpanName_HTTP(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -566,14 +500,9 @@ func TestNormalizeHTTPPath(t *testing.T) {
 	}
 }
 
-func TestProcessAttributes_ComplexScenario(t *testing.T) {
+func TestProcessTraces_ComplexScenario(t *testing.T) {
 	cfg := &Config{
 		Enabled: true,
-		Mappings: []AttributeMapping{
-			{From: "old.attr1", To: "new.attr1", Action: "rename"},
-			{From: "old.attr2", To: "new.attr2", Action: "copy"},
-			{From: "old.attr3", To: "new.attr3", Action: "move"},
-		},
 		SpanNameRules: SpanNameRules{
 			Enabled: true,
 			HTTP: HTTPSpanNameRules{
@@ -591,9 +520,8 @@ func TestProcessAttributes_ComplexScenario(t *testing.T) {
 	rs := traces.ResourceSpans().AppendEmpty()
 	
 	// Add resource attributes
-	rs.Resource().Attributes().PutStr("old.attr1", "value1")
-	rs.Resource().Attributes().PutStr("old.attr2", "value2")
-	rs.Resource().Attributes().PutStr("old.attr3", "value3")
+	rs.Resource().Attributes().PutStr("service.name", "test-service")
+	rs.Resource().Attributes().PutStr("service.version", "1.0.0")
 	
 	ss := rs.ScopeSpans().AppendEmpty()
 	span := ss.Spans().AppendEmpty()
@@ -603,38 +531,32 @@ func TestProcessAttributes_ComplexScenario(t *testing.T) {
 	spanAttrs := span.Attributes()
 	spanAttrs.PutStr("http.method", "GET")
 	spanAttrs.PutStr("url.path", "/users/12345?include=profile&limit=10")
-	spanAttrs.PutStr("old.attr1", "span_value1")
+	spanAttrs.PutStr("user.id", "12345")
 	
 	result, err := processor.processTraces(context.Background(), traces)
 	require.NoError(t, err)
 	
-	// Check resource attributes
+	// Check resource attributes remain unchanged
 	resourceAttrs := result.ResourceSpans().At(0).Resource().Attributes()
-	_, exists := resourceAttrs.Get("old.attr1")
-	assert.False(t, exists, "old.attr1 should be removed")
-	
-	val, exists := resourceAttrs.Get("new.attr1")
+	val, exists := resourceAttrs.Get("service.name")
 	assert.True(t, exists)
-	assert.Equal(t, "value1", val.AsString())
+	assert.Equal(t, "test-service", val.AsString())
 	
-	val, exists = resourceAttrs.Get("old.attr2")
-	assert.True(t, exists, "old.attr2 should still exist")
-	assert.Equal(t, "value2", val.AsString())
-	
-	val, exists = resourceAttrs.Get("new.attr2")
+	val, exists = resourceAttrs.Get("service.version")
 	assert.True(t, exists)
-	assert.Equal(t, "value2", val.AsString())
+	assert.Equal(t, "1.0.0", val.AsString())
 	
-	// Check span
+	// Check span name is normalized
 	resultSpan := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
 	assert.Equal(t, "GET /users/{id}", resultSpan.Name())
 	
-	// Check span attributes
+	// Check span attributes remain unchanged
 	resultSpanAttrs := resultSpan.Attributes()
-	_, exists = resultSpanAttrs.Get("old.attr1")
-	assert.False(t, exists)
-	
-	val, exists = resultSpanAttrs.Get("new.attr1")
+	val, exists = resultSpanAttrs.Get("http.method")
 	assert.True(t, exists)
-	assert.Equal(t, "span_value1", val.AsString())
+	assert.Equal(t, "GET", val.AsString())
+	
+	val, exists = resultSpanAttrs.Get("user.id")
+	assert.True(t, exists)
+	assert.Equal(t, "12345", val.AsString())
 }
