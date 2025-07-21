@@ -134,6 +134,46 @@ func TestConfig_Validate(t *testing.T) {
 			errMsg:  "duplicate rule ID: test",
 		},
 		{
+			name: "valid rule with span_kind",
+			config: &Config{
+				Enabled: true,
+				SpanProcessing: SpanProcessingConfig{
+					Enabled: true,
+					Mode:    ModeEnforce,
+					Rules: []OTTLRule{
+						{
+							ID:            "http_server",
+							Priority:      100,
+							SpanKind:      []string{"server"},
+							Condition:     `attributes["http.method"] != nil`,
+							OperationName: `"HTTP Server"`,
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid span_kind value",
+			config: &Config{
+				Enabled: true,
+				SpanProcessing: SpanProcessingConfig{
+					Enabled: true,
+					Rules: []OTTLRule{
+						{
+							ID:            "test",
+							Priority:      100,
+							SpanKind:      []string{"invalid_kind"},
+							Condition:     `true`,
+							OperationName: `"test"`,
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "rule test has invalid span_kind value: invalid_kind",
+		},
+		{
 			name: "rule with empty condition",
 			config: &Config{
 				Enabled: true,

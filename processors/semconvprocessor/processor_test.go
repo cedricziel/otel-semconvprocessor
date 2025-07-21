@@ -136,6 +136,81 @@ func TestProcessTraces_EnforceMode(t *testing.T) {
 	assert.Equal(t, "http", val.AsString())
 }
 
+func TestProcessTraces_SpanKindMatching(t *testing.T) {
+	cfg := &Config{
+		Enabled: true,
+		SpanProcessing: SpanProcessingConfig{
+			Enabled: true,
+			Mode:    ModeEnforce,
+			Rules: []OTTLRule{
+				{
+					ID:            "http_server",
+					Priority:      100,
+					SpanKind:      []string{"server"},
+					Condition:     `attributes["http.method"] != nil`,
+					OperationName: `Concat(["HTTP Server:", attributes["http.method"], attributes["http.route"]], " ")`,
+				},
+				{
+					ID:            "http_client",
+					Priority:      200,
+					SpanKind:      []string{"client"},
+					Condition:     `attributes["http.method"] != nil`,
+					OperationName: `Concat(["HTTP Client:", attributes["http.method"], attributes["http.url"]], " ")`,
+				},
+				{
+					ID:            "http_any",
+					Priority:      300,
+					Condition:     `attributes["http.method"] != nil`,
+					OperationName: `"HTTP Generic"`,
+				},
+			},
+		},
+	}
+	require.NoError(t, cfg.Validate())
+	
+	telemetryBuilder, _ := metadata.NewTelemetryBuilder(processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	processor, err := newSemconvProcessor(zap.NewNop(), cfg, telemetryBuilder, processortest.NewNopSettings(component.MustNewType("semconv")).TelemetrySettings)
+	require.NoError(t, err)
+	
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	ss := rs.ScopeSpans().AppendEmpty()
+	
+	// Server span - should match http_server rule
+	serverSpan := ss.Spans().AppendEmpty()
+	serverSpan.SetName("original_server")
+	serverSpan.SetKind(ptrace.SpanKindServer)
+	serverSpan.Attributes().PutStr("http.method", "GET")
+	serverSpan.Attributes().PutStr("http.route", "/api/users")
+	
+	// Client span - should match http_client rule
+	clientSpan := ss.Spans().AppendEmpty()
+	clientSpan.SetName("original_client")
+	clientSpan.SetKind(ptrace.SpanKindClient)
+	clientSpan.Attributes().PutStr("http.method", "POST")
+	clientSpan.Attributes().PutStr("http.url", "https://api.example.com/data")
+	
+	// Producer span with HTTP - should match http_any rule (no span_kind restriction)
+	producerSpan := ss.Spans().AppendEmpty()
+	producerSpan.SetName("original_producer")
+	producerSpan.SetKind(ptrace.SpanKindProducer)
+	producerSpan.Attributes().PutStr("http.method", "PUT")
+	
+	result, err := processor.processTraces(context.Background(), traces)
+	require.NoError(t, err)
+	
+	resultSpans := result.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	
+	// Check server span
+	assert.Equal(t, "HTTP Server: GET /api/users", resultSpans.At(0).Name())
+	
+	// Check client span
+	assert.Equal(t, "HTTP Client: POST https://api.example.com/data", resultSpans.At(1).Name())
+	
+	// Check producer span - matched generic rule
+	assert.Equal(t, "HTTP Generic", resultSpans.At(2).Name())
+}
+
 func TestProcessTraces_RulePriority(t *testing.T) {
 	cfg := &Config{
 		Enabled: true,

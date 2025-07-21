@@ -49,40 +49,77 @@ processors:
       operation_type_attribute: "operation.type"
       original_name_attribute: "name.original"
       rules:
-        # HTTP route normalization (highest priority)
-        - id: "http_routes"
+        # HTTP server spans - route normalization (highest priority)
+        - id: "http_server_routes"
           priority: 100
+          span_kind: ["server"]  # Only matches server spans
           condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
           operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
           operation_type: '"http"'
 
-        # HTTP path normalization with custom function
+        # HTTP client spans - URL normalization
+        - id: "http_client_requests"
+          priority: 150
+          span_kind: ["client"]  # Only matches client spans
+          condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
+          operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+          operation_type: '"http_client"'
+
+        # HTTP path normalization (any span kind)
         - id: "http_paths"
           priority: 200
+          # No span_kind specified - matches all span kinds
           condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
           operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
           operation_type: '"http"'
 
-        # Database query processing
+        # Database client operations
         - id: "database_queries"
           priority: 300
+          span_kind: ["client"]  # Database calls are typically client spans
           condition: 'attributes["db.statement"] != nil'
           operation_name: 'ParseSQL(attributes["db.statement"])'
           operation_type: 'attributes["db.system"]'
 
-        # gRPC operations
-        - id: "grpc_operations"
+        # gRPC server operations
+        - id: "grpc_server_operations"
           priority: 400
+          span_kind: ["server"]
           condition: 'attributes["rpc.system"] == "grpc" and attributes["rpc.method"] != nil'
           operation_name: 'Concat([attributes["rpc.service"], attributes["rpc.method"]], "/")'
           operation_type: '"grpc"'
 
-        # Messaging operations
-        - id: "messaging"
+        # gRPC client operations
+        - id: "grpc_client_operations"
+          priority: 450
+          span_kind: ["client"]
+          condition: 'attributes["rpc.system"] == "grpc" and attributes["rpc.method"] != nil'
+          operation_name: 'Concat(["grpc.client", attributes["rpc.service"], attributes["rpc.method"]], "/")'
+          operation_type: '"grpc_client"'
+
+        # Messaging producer operations
+        - id: "messaging_producer"
           priority: 500
-          condition: 'attributes["messaging.operation"] != nil and attributes["messaging.destination.name"] != nil'
-          operation_name: 'Concat([attributes["messaging.operation"], attributes["messaging.destination.name"]], " ")'
+          span_kind: ["producer"]
+          condition: 'attributes["messaging.operation"] == "publish" and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat(["publish", attributes["messaging.destination.name"]], " ")'
           operation_type: '"messaging"'
+
+        # Messaging consumer operations
+        - id: "messaging_consumer"
+          priority: 550
+          span_kind: ["consumer"]
+          condition: 'attributes["messaging.operation"] == "process" and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat(["process", attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+
+        # Internal operations
+        - id: "internal_operations"
+          priority: 600
+          span_kind: ["internal"]
+          condition: 'attributes["internal.operation"] != nil'
+          operation_name: 'attributes["internal.operation"]'
+          operation_type: '"internal"'
 
 exporters:
   # Debug exporter for testing

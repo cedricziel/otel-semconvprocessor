@@ -66,6 +66,11 @@ type OTTLRule struct {
 	// Priority determines rule evaluation order (lower number = higher priority)
 	Priority int `mapstructure:"priority"`
 	
+	// SpanKind restricts the rule to specific span kinds (optional)
+	// Valid values: "server", "client", "producer", "consumer", "internal"
+	// If empty, the rule applies to all span kinds
+	SpanKind []string `mapstructure:"span_kind"`
+	
 	// Condition is an OTTL expression that must evaluate to true for the rule to match
 	Condition string `mapstructure:"condition"`
 	
@@ -130,6 +135,20 @@ func (sp *SpanProcessingConfig) Validate() error {
 		}
 		if rule.OperationName == "" {
 			return fmt.Errorf("rule %s has empty operation_name", rule.ID)
+		}
+		
+		// Validate span_kind values if specified
+		validSpanKinds := map[string]bool{
+			"server":   true,
+			"client":   true,
+			"producer": true,
+			"consumer": true,
+			"internal": true,
+		}
+		for _, kind := range rule.SpanKind {
+			if !validSpanKinds[kind] {
+				return fmt.Errorf("rule %s has invalid span_kind value: %s", rule.ID, kind)
+			}
 		}
 	}
 	

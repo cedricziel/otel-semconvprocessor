@@ -28,13 +28,21 @@ processors:
       preserve_original_name: true
       original_name_attribute: "name.original"
       rules:
-        - id: "http_routes"
+        - id: "http_server_routes"
           priority: 100
+          span_kind: ["server"]  # Only matches server spans
           condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
           operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
           operation_type: '"http"'
+        - id: "http_client_requests"
+          priority: 150
+          span_kind: ["client"]  # Only matches client spans
+          condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
+          operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+          operation_type: '"http_client"'
         - id: "database_queries"
           priority: 200
+          # No span_kind specified - matches all span kinds
           condition: 'attributes["db.statement"] != nil'
           operation_name: 'ParseSQL(attributes["db.statement"])'
           operation_type: '"database"'
@@ -53,46 +61,112 @@ Each rule must specify:
 - **`condition`**: OTTL boolean expression to match spans
 - **`operation_name`**: OTTL expression to generate the operation name
 - **`operation_type`** (optional): OTTL expression for operation type
+- **`span_kind`** (optional): List of span kinds to match (`server`, `client`, `producer`, `consumer`, `internal`)
 
 ## OTTL Examples
 
-### HTTP Route Normalization
+### HTTP Route Normalization with Span Kind Filtering
 
 ```yaml
-- id: "http_normalization"
+# Server-side HTTP spans
+- id: "http_server_routes"
   priority: 100
+  span_kind: ["server"]  # Only matches server spans
+  condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
+  operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
+  operation_type: '"http"'
+
+# Client-side HTTP spans
+- id: "http_client_requests"
+  priority: 150
+  span_kind: ["client"]  # Only matches client spans
+  condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
+  operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+  operation_type: '"http_client"'
+
+# Fallback for any HTTP span (no span_kind restriction)
+- id: "http_generic"
+  priority: 200
   condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
   operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
   operation_type: '"http"'
 ```
 
 This transforms:
-- `GET /users/12345/profile` → `GET /users/{id}/profile`
-- `POST /api/v1/orders/550e8400-e29b-41d4-a716-446655440000` → `POST /api/v1/orders/{id}`
+- Server span: `GET /users/12345/profile` → `GET /users/{id}/profile`
+- Client span: `POST https://api.example.com/orders?id=123` → `POST https://api.example.com/orders`
 
 ### Database Query Processing
 
 ```yaml
-- id: "database_operations"
+# Database client operations
+- id: "database_client_operations"
   priority: 200
+  span_kind: ["client"]  # Database operations are typically client spans
   condition: 'attributes["db.statement"] != nil'
   operation_name: 'ParseSQL(attributes["db.statement"])'
   operation_type: 'attributes["db.system"]'
+
+# Database internal operations (e.g., triggers, stored procedures)
+- id: "database_internal_operations"
+  priority: 250
+  span_kind: ["internal"]
+  condition: 'attributes["db.operation"] != nil and attributes["db.name"] != nil'
+  operation_name: 'Concat([attributes["db.operation"], attributes["db.name"]], " ")'
+  operation_type: '"db_internal"'
 ```
 
 This transforms:
-- `SELECT * FROM users WHERE id = ?` → `SELECT users`
-- `INSERT INTO products (name, price) VALUES (?, ?)` → `INSERT products`
+- Client span: `SELECT * FROM users WHERE id = ?` → `SELECT users`
+- Internal span: `EXEC stored_proc` → `EXEC mydb`
 
-### Custom Business Logic
+### Messaging Operations with Span Kind
 
 ```yaml
-- id: "service_endpoints"
+# Producer spans
+- id: "kafka_producer"
   priority: 300
-  condition: 'attributes["service.name"] == "user-service" and span.kind == SPAN_KIND_SERVER'
-  operation_name: 'Concat([attributes["service.name"], attributes["rpc.method"]], "::")'
-  operation_type: '"rpc"'
+  span_kind: ["producer"]
+  condition: 'attributes["messaging.system"] == "kafka"'
+  operation_name: 'Concat(["kafka.produce", attributes["messaging.destination.name"]], ":")'
+  operation_type: '"messaging"'
+
+# Consumer spans
+- id: "kafka_consumer"
+  priority: 350
+  span_kind: ["consumer"]
+  condition: 'attributes["messaging.system"] == "kafka"'
+  operation_name: 'Concat(["kafka.consume", attributes["messaging.destination.name"]], ":")'
+  operation_type: '"messaging"'
 ```
+
+### Span Kind Filtering
+
+The `span_kind` property allows rules to target specific types of spans:
+
+```yaml
+# Multiple span kinds - matches either server OR internal spans
+- id: "internal_operations"
+  priority: 500
+  span_kind: ["server", "internal"]
+  condition: 'attributes["internal.operation"] != nil'
+  operation_name: 'attributes["internal.operation"]'
+  operation_type: '"internal"'
+
+# No span_kind specified - matches ALL span kinds
+- id: "catch_all"
+  priority: 1000
+  condition: 'true'
+  operation_name: '"unknown_operation"'
+  operation_type: '"unknown"'
+```
+
+Valid span kind values:
+- `server`: Synchronous request handler
+- `client`: Synchronous outbound request
+- `producer`: Asynchronous message/event producer
+- `consumer`: Asynchronous message/event consumer
+- `internal`: Internal operation not at a system boundary
 
 ## Custom OTTL Functions
 
@@ -145,32 +219,51 @@ processors:
       mode: "enforce"
       preserve_original_name: true
       rules:
-        # High-priority HTTP route normalization
-        - id: "http_routes"
+        # HTTP server spans - route-based
+        - id: "http_server_routes"
           priority: 100
+          span_kind: ["server"]
           condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
           operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
           operation_type: '"http"'
         
-        # HTTP path normalization (fallback)
+        # HTTP client spans - URL-based
+        - id: "http_client_requests"
+          priority: 150
+          span_kind: ["client"]
+          condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
+          operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+          operation_type: '"http_client"'
+        
+        # HTTP path normalization (any span kind)
         - id: "http_paths"
           priority: 200
           condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
           operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
           operation_type: '"http"'
         
-        # Database operations
+        # Database client operations
         - id: "database_queries"
           priority: 300
+          span_kind: ["client"]
           condition: 'attributes["db.statement"] != nil'
           operation_name: 'ParseSQL(attributes["db.statement"])'
           operation_type: 'attributes["db.system"]'
         
-        # Messaging operations
-        - id: "messaging"
+        # Messaging producer operations
+        - id: "messaging_producer"
           priority: 400
-          condition: 'attributes["messaging.operation"] != nil'
-          operation_name: 'Concat([attributes["messaging.operation"], attributes["messaging.destination.name"]], " ")'
+          span_kind: ["producer"]
+          condition: 'attributes["messaging.operation"] == "publish"'
+          operation_name: 'Concat(["publish", attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+        
+        # Messaging consumer operations
+        - id: "messaging_consumer"
+          priority: 450
+          span_kind: ["consumer"]
+          condition: 'attributes["messaging.operation"] == "process"'
+          operation_name: 'Concat(["process", attributes["messaging.destination.name"]], " ")'
           operation_type: '"messaging"'
 
 service:

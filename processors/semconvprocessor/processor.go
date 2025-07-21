@@ -37,6 +37,7 @@ type semconvProcessor struct {
 type compiledRule struct {
 	ID              string
 	Priority        int
+	SpanKind        []string // Allowed span kinds (empty means all)
 	Condition       ottl.Condition[ottlspan.TransformContext]
 	OperationName   *ottl.ValueExpression[ottlspan.TransformContext]
 	OperationType   *ottl.ValueExpression[ottlspan.TransformContext] // Optional
@@ -84,6 +85,7 @@ func (sp *semconvProcessor) compileRules() error {
 		compiled := compiledRule{
 			ID:       rule.ID,
 			Priority: rule.Priority,
+			SpanKind: rule.SpanKind,
 		}
 		
 		// Compile condition
@@ -166,6 +168,26 @@ func (sp *semconvProcessor) processTraces(ctx context.Context, td ptrace.Traces)
 	return td, nil
 }
 
+// getSpanKindString converts SpanKind to string for comparison
+func getSpanKindString(kind ptrace.SpanKind) string {
+	switch kind {
+	case ptrace.SpanKindUnspecified:
+		return "unspecified"
+	case ptrace.SpanKindInternal:
+		return "internal"
+	case ptrace.SpanKindServer:
+		return "server"
+	case ptrace.SpanKindClient:
+		return "client"
+	case ptrace.SpanKindProducer:
+		return "producer"
+	case ptrace.SpanKindConsumer:
+		return "consumer"
+	default:
+		return "unspecified"
+	}
+}
+
 // processSpan processes a single span according to configured rules
 func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, resource pcommon.Resource, scope pcommon.InstrumentationScope) {
 	// Track original span name for benchmark mode
@@ -180,6 +202,21 @@ func (sp *semconvProcessor) processSpan(ctx context.Context, span ptrace.Span, r
 	
 	// Evaluate rules in priority order
 	for _, rule := range sp.compiledRules {
+		// Check span kind restriction if specified
+		if len(rule.SpanKind) > 0 {
+			spanKindMatches := false
+			currentKind := getSpanKindString(span.Kind())
+			for _, allowedKind := range rule.SpanKind {
+				if allowedKind == currentKind {
+					spanKindMatches = true
+					break
+				}
+			}
+			if !spanKindMatches {
+				continue
+			}
+		}
+		
 		// Check condition
 		matches, err := rule.Condition.Eval(ctx, tCtx)
 		if err != nil {

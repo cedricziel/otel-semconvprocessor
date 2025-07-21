@@ -73,6 +73,7 @@ The semconv processor uses OTTL-based rules to reduce cardinality by generating 
 - **OTTL-powered rule engine** for maximum flexibility
 - **Dual processing modes**: `enrich` (adds attributes) or `enforce` (replaces span names)
 - **Rule prioritization** with first-match-wins behavior
+- **Span kind filtering** to create targeted rules for specific span types
 - **Custom OTTL functions** for common patterns
 - **Cardinality tracking metrics**
 
@@ -91,8 +92,9 @@ processors:
       preserve_original_name: true
       original_name_attribute: "name.original"
       rules:
-        - id: "http_routes"
+        - id: "http_server_routes"
           priority: 100
+          span_kind: ["server"]  # Only matches server spans
           condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
           operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
           operation_type: '"http"'
@@ -116,31 +118,50 @@ processors:
       mode: "enforce"
       preserve_original_name: true
       rules:
-        # HTTP route normalization (highest priority)
-        - id: "http_routes"
+        # HTTP server spans - route normalization (highest priority)
+        - id: "http_server_routes"
           priority: 100
+          span_kind: ["server"]  # Only server spans
           condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
           operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
           operation_type: '"http"'
         
-        # HTTP path normalization (fallback)
+        # HTTP client spans - URL normalization
+        - id: "http_client_requests"
+          priority: 150
+          span_kind: ["client"]  # Only client spans
+          condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
+          operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+          operation_type: '"http_client"'
+        
+        # HTTP path normalization (fallback for any span kind)
         - id: "http_paths"
           priority: 200
           condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
           operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
           operation_type: '"http"'
         
-        # Database query processing
+        # Database client operations
         - id: "database_queries"
           priority: 300
+          span_kind: ["client"]  # Database calls are typically client spans
           condition: 'attributes["db.statement"] != nil'
           operation_name: 'ParseSQL(attributes["db.statement"])'
           operation_type: 'attributes["db.system"]'
         
-        # Messaging operations
-        - id: "messaging"
+        # Messaging producer operations
+        - id: "messaging_producer"
           priority: 400
-          condition: 'attributes["messaging.operation"] != nil'
+          span_kind: ["producer"]
+          condition: 'attributes["messaging.operation"] != nil and attributes["messaging.destination.name"] != nil'
+          operation_name: 'Concat([attributes["messaging.operation"], attributes["messaging.destination.name"]], " ")'
+          operation_type: '"messaging"'
+        
+        # Messaging consumer operations
+        - id: "messaging_consumer"
+          priority: 450
+          span_kind: ["consumer"]
+          condition: 'attributes["messaging.operation"] != nil and attributes["messaging.destination.name"] != nil'
           operation_name: 'Concat([attributes["messaging.operation"], attributes["messaging.destination.name"]], " ")'
           operation_type: '"messaging"'
 
@@ -190,19 +211,54 @@ Removes query parameters from URLs:
 
 ## OTTL Rule Examples
 
+### Span Kind Filtering
+
+Rules can be restricted to specific span kinds to create more targeted transformations:
+
+```yaml
+# Server-only rule
+- id: "api_endpoints"
+  priority: 100
+  span_kind: ["server"]  # Only matches server spans
+  condition: 'attributes["http.route"] != nil'
+  operation_name: 'attributes["http.route"]'
+
+# Client-only rule  
+- id: "http_clients"
+  priority: 150
+  span_kind: ["client"]  # Only matches client spans
+  condition: 'attributes["http.url"] != nil'
+  operation_name: 'RemoveQueryParams(attributes["http.url"])'
+
+# Multiple span kinds
+- id: "async_operations"
+  priority: 200
+  span_kind: ["producer", "consumer"]  # Matches either producer OR consumer spans
+  condition: 'attributes["messaging.system"] != nil'
+  operation_name: 'Concat([attributes["messaging.system"], attributes["messaging.operation"]], ".")'
+
+# No span_kind - matches all spans
+- id: "catch_all"
+  priority: 1000
+  condition: 'true'
+  operation_name: '"unknown"'
+```
+
 ### HTTP Normalizations
 ```yaml
-# Route-based (preferred)
+# Server spans - route-based (preferred)
+span_kind: ["server"]
 condition: 'attributes["http.method"] != nil and attributes["http.route"] != nil'
 operation_name: 'Concat([attributes["http.method"], attributes["http.route"]], " ")'
 
-# Path-based (fallback)  
+# Client spans - URL-based
+span_kind: ["client"]
+condition: 'attributes["http.method"] != nil and attributes["http.url"] != nil'
+operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.url"])], " ")'
+
+# Any span kind - path-based (fallback)  
 condition: 'attributes["http.method"] != nil and attributes["url.path"] != nil'
 operation_name: 'Concat([attributes["http.method"], NormalizePath(attributes["url.path"])], " ")'
-
-# Query parameter removal
-condition: 'attributes["http.target"] != nil'
-operation_name: 'Concat([attributes["http.method"], RemoveQueryParams(attributes["http.target"])], " ")'
 ```
 
 ### Database Operations
