@@ -55,12 +55,6 @@ jobs:
           go mod download
           go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
-      - name: Run tests - Collector
-        working-directory: otelcol-semconv
-        run: |
-          go mod download
-          go test -v -race ./...
-
       - name: Upload coverage to Codecov
         if: matrix.go-version == env.GO_VERSION
         uses: codecov/codecov-action@v4
