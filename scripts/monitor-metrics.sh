@@ -176,9 +176,29 @@ display_metrics() {
     
     if [ -n "$original_count" ] && [ -n "$reduced_count" ] && [ "$original_count" != "0" ] && [ "$original_count" != "" ]; then
         local reduction_pct=$(echo "scale=2; (($original_count - $reduced_count) * 100) / $original_count" | bc)
-        echo -e "Original Unique Span Names: ${original_count}"
-        echo -e "Reduced Unique Span Names: ${reduced_count}"
+        echo -e "Original Unique Span Names: ${original_count} (current in memory)"
+        echo -e "Reduced Unique Span Names: ${reduced_count} (current in memory)"
         echo -e "Cardinality Reduction: ${reduction_pct}%"
+        
+        # Show cumulative unique discoveries (counter metrics)
+        local unique_spans_total=$(echo "$metrics" | grep "^otelcol_processor_semconv_unique_span_names__names__total{" | awk '{print $2}' | head -1)
+        local unique_operations_total=$(echo "$metrics" | grep "^otelcol_processor_semconv_unique_operation_names__names__total{" | awk '{print $2}' | head -1)
+        
+        if [ -n "$unique_spans_total" ] || [ -n "$unique_operations_total" ]; then
+            echo -e "\n${BLUE}Cumulative Unique Discoveries:${NC}"
+            if [ -n "$unique_spans_total" ]; then
+                echo -e "Total Unique Span Names Seen: $(format_number ${unique_spans_total})"
+            fi
+            if [ -n "$unique_operations_total" ]; then
+                echo -e "Total Unique Operations Generated: $(format_number ${unique_operations_total})"
+            fi
+            
+            # Calculate cumulative reduction percentage
+            if [ -n "$unique_spans_total" ] && [ -n "$unique_operations_total" ] && [ "$unique_spans_total" != "0" ]; then
+                local cumulative_reduction_pct=$(echo "scale=2; (($unique_spans_total - $unique_operations_total) * 100) / $unique_spans_total" | bc)
+                echo -e "Cumulative Cardinality Reduction: ${cumulative_reduction_pct}%"
+            fi
+        fi
         
         # Show percentage of spans being normalized
         local enforced_total=0
