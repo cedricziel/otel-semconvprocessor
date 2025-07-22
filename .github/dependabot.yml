@@ -1,3 +1,4 @@
+---
 # Dependabot configuration for automated dependency updates
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
 
@@ -12,11 +13,6 @@ updates:
       time: "09:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 10
-    reviewers:
-      - "cedricziel"
-    labels:
-      - "dependencies"
-      - "go"
     commit-message:
       prefix: "deps"
       include: "scope"
@@ -35,12 +31,6 @@ updates:
       time: "09:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 10
-    reviewers:
-      - "cedricziel"
-    labels:
-      - "dependencies"
-      - "go"
-      - "processor"
     commit-message:
       prefix: "deps"
       include: "scope"
@@ -54,12 +44,6 @@ updates:
       time: "09:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 10
-    reviewers:
-      - "cedricziel"
-    labels:
-      - "dependencies"
-      - "go"
-      - "collector"
     commit-message:
       prefix: "deps"
       include: "scope"
@@ -73,11 +57,6 @@ updates:
       time: "09:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 5
-    reviewers:
-      - "cedricziel"
-    labels:
-      - "dependencies"
-      - "github-actions"
     commit-message:
       prefix: "ci"
       include: "scope"
@@ -91,11 +70,6 @@ updates:
       time: "09:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 5
-    reviewers:
-      - "cedricziel"
-    labels:
-      - "dependencies"
-      - "docker"
     commit-message:
       prefix: "docker"
       include: "scope"
