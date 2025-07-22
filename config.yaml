@@ -6,24 +6,13 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
-  
-  # Prometheus receiver to scrape collector's own metrics
-  prometheus:
-    config:
-      scrape_configs:
-        - job_name: 'otelcol-internal'
-          scrape_interval: 10s
-          static_configs:
-            - targets: ['localhost:8888']
-              labels:
-                service: 'otelcol-semconv'
 
 processors:
   # Batch processor for better performance
   batch:
     timeout: 1s
     send_batch_size: 1024
-  
+
   # Resource processor to enrich collector internal metrics
   resource/collector-telemetry:
     attributes:
@@ -63,7 +52,7 @@ processors:
         # - Parse SQL statements instead of using raw queries
         # - Avoid high-cardinality attributes like document IDs, bucket names, cron expressions
         # - Support both old and new semantic conventions using FirstNonNil()
-        
+
         # HTTP server spans - route normalization (supports both old and new conventions)
         - id: "http_server_routes"
           priority: 100
@@ -212,15 +201,10 @@ exporters:
     sampling_initial: 10
     sampling_thereafter: 100
 
-  # OTLP exporter to Jaeger
-  otlp/jaeger:
-    endpoint: jaeger:4317
-    tls:
-      insecure: true
-
-  # Prometheus metrics
-  prometheus:
-    endpoint: 0.0.0.0:8888
+  file/benchmark-output:
+    path: benchmark/output.log
+    rotation:
+      max_megabytes: 10
 
 extensions:
   health_check:
@@ -235,12 +219,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [semconv, batch]
-      exporters: [debug, otlp/jaeger]
+      exporters: [debug, file/benchmark-output]
 
     metrics:
-      receivers: [otlp, prometheus]
+      receivers: [otlp]
       processors: [resource/collector-telemetry, batch]
-      exporters: [prometheus]
+      exporters: [debug]
 
     logs:
       receivers: [otlp]
@@ -252,4 +236,9 @@ service:
       level: info
     metrics:
       level: detailed
-      address: 0.0.0.0:8888
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: '0.0.0.0'
+                port: 8888
