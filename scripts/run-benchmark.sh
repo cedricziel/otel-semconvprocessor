@@ -297,25 +297,16 @@ BEGIN {
     print
     print ""
     print "*Last updated: " timestamp "*"
-    # Skip existing timestamps
-    while (getline && /^\*Last updated:/) {}
     print ""
-    print
-    next
+    # Skip any existing content until we hit the next section
+    while (getline && !/^###/) {}
 }
 /^### Cardinality Reduction/ {
     in_cardinality = 1
     in_performance = 0
     in_rules = 0
     print
-    print ""
-    # Print table header
-    print "| Metric | Value | Description |"
-    print "|--------|-------|-------------|"
-    # Skip existing table
-    while (getline && (/^\|/ || /^$/)) {}
-    # Back up one line
-    in_cardinality = 1
+    print ""  # Add empty line after the heading
     next
 }
 /^### Processing Performance/ {
@@ -323,14 +314,7 @@ BEGIN {
     in_performance = 1
     in_rules = 0
     print
-    print ""
-    # Print table header
-    print "| Metric | Value | Description |"
-    print "|--------|-------|-------------|"
-    # Skip existing table
-    while (getline && (/^\|/ || /^$/)) {}
-    # Back up one line
-    in_performance = 1
+    print ""  # Add empty line after the heading
     next
 }
 /^### Rule Effectiveness/ {
@@ -345,22 +329,35 @@ BEGIN {
     in_cardinality = 0
     in_performance = 0
     in_rules = 0
+    print ""  # Ensure empty line before next section
 }
 in_cardinality == 1 {
-    print "| **Original Unique Span Names** | " original " | Number of unique span names before processing |"
-    print "| **Reduced Unique Operation Names** | " reduced " | Number of unique operation names after processing |"
-    print "| **Cardinality Reduction** | " reduction " | Percentage reduction in unique values |"
-    print "| **Total Spans Processed** | " total " | Total number of spans in the benchmark |"
-    print ""
-    in_cardinality = 2
-    next
+    if (/^$/) {
+        # Print table without extra empty line (one is already there)
+        print "| Metric | Value | Description |"
+        print "|--------|-------|-------------|"
+        print "| **Original Unique Span Names** | " original " | Number of unique span names before processing |"
+        print "| **Reduced Unique Operation Names** | " reduced " | Number of unique operation names after processing |"
+        print "| **Cardinality Reduction** | " reduction " | Percentage reduction in unique values |"
+        print "| **Total Spans Processed** | " total " | Total number of spans in the benchmark |"
+        print ""
+        in_cardinality = 2
+        # Skip any existing table
+        while (getline && /^\|/) {}
+    }
 }
 in_performance == 1 {
-    print "| **Average Processing Duration** | " avg_duration " | Average time to process a batch (ms) |"
-    print "| **Processing Throughput** | " throughput " | Spans processed per second |"
-    print ""
-    in_performance = 2
-    next
+    if (/^$/) {
+        # Print table without extra empty line (one is already there)
+        print "| Metric | Value | Description |"
+        print "|--------|-------|-------------|"
+        print "| **Average Processing Duration** | " avg_duration " | Average time to process a batch (ms) |"
+        print "| **Processing Throughput** | " throughput " | Spans processed per second |"
+        print ""
+        in_performance = 2
+        # Skip any existing table
+        while (getline && /^\|/) {}
+    }
 }
 in_rules && /^\| Rule ID/ && !printed_rules {
     print
@@ -368,11 +365,12 @@ in_rules && /^\| Rule ID/ && !printed_rules {
     print
     # Print rules data (unescape the special character)
     gsub(/\034/, "\n", rules_data)
-    split(rules_data, rules, "\n")
+    # Split into lines and print in order (already sorted)
+    n = split(rules_data, lines, "\n")
     count = 0
-    for (i in rules) {
-        if (rules[i] != "" && count < 10) {
-            split(rules[i], parts, "|")
+    for (i = 1; i <= n && count < 10; i++) {
+        if (lines[i] != "") {
+            split(lines[i], parts, "|")
             if (length(parts) == 2 && parts[2] > 0) {
                 pct = sprintf("%.1f", (parts[2] / total) * 100)
                 printf "| %s | %s | %s%% | - |\n", parts[1], parts[2], pct
@@ -383,6 +381,26 @@ in_rules && /^\| Rule ID/ && !printed_rules {
     printed_rules = 1
     # Skip remaining table rows
     while (getline && /^\|/) {}
+    print ""  # Add empty line after rules table
+    next
+}
+# Ensure empty line before ### Version Comparison
+/^### Version Comparison/ {
+    print ""
+    print
+    getline  # Skip empty line
+    print ""
+    getline  # Skip table header
+    print
+    getline  # Skip separator
+    print
+    # Update the Current row
+    getline
+    if (/^\| Current/) {
+        print "| Current | " original " | " reduced " | " reduction " | " avg_duration " |"
+        # Skip any remaining rows
+        while (getline && /^\|/) {}
+    }
     next
 }
 !in_cardinality && !in_performance && !in_rules {

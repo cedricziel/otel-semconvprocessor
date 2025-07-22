@@ -38,7 +38,7 @@ The semconv processor is designed to normalize span names according to semantic 
 
 ## Latest Results
 
-*Last updated: 2025-07-22 09:27:45 CEST*
+*Last updated: 2025-07-22 09:39:06 CEST*
 
 ### Cardinality Reduction
 
@@ -53,8 +53,8 @@ The semconv processor is designed to normalize span names according to semantic 
 
 | Metric | Value | Description |
 |--------|-------|-------------|
-| **Average Processing Duration** | .050ms | Average time to process a batch (ms) |
-| **Processing Throughput** | 20000 spans/sec | Spans processed per second |
+| **Average Processing Duration** | .044ms | Average time to process a batch (ms) |
+| **Processing Throughput** | 22727 spans/sec | Spans processed per second |
 
 ### Rule Effectiveness
 
@@ -69,15 +69,13 @@ The semconv processor is designed to normalize span names according to semantic 
 | messaging_system | 35 | 0.8% | - |
 | messaging_producer | 17 | 0.4% | - |
 | messaging_consumer | 17 | 0.4% | - |
+| database_queries | 17 | 0.4% | - |
 
 ### Version Comparison
 
 | Version | Original Names | Reduced Names | Reduction % | Avg Duration (ms) |
 |---------|----------------|---------------|-------------|-------------------|
-| Current | 109 | 40 | 63.30% | 0.050 |
-
-## Running the Benchmark
-
+| Current | 109 | 40 | 63.30% | .044ms |
 To run the benchmark yourself:
 
 ```bash
