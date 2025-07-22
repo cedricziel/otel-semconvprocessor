@@ -14,6 +14,7 @@ The semconv processor is designed to normalize span names according to semantic 
 
 ### Test Data
 - **Source**: Real-world OpenTelemetry spans from the OpenTelemetry Demo application
+- **Collection Method**: Traffic capture from vanilla OpenTelemetry Demo deployment
 - **Size**: ~4.4MB of JSON-formatted span data
 - **Span Count**: Varies per run (typically 1000-2000 spans)
 - **Services**: Mix of frontend, backend, database, messaging, and proxy services
